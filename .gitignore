@@ -3,11 +3,7 @@ __pycache__/
 *.py[cod]
 data/
 **/.DS_Store
-checkpoints/
-output/
-trained_model/
 # C extensions
-yolo/yolov7/runs/
 *.so
 .vscode/
 # Distribution / packaging
