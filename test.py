@@ -4,6 +4,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import timm
+import os
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
 
 def load_backbone() -> nn.Module:
@@ -77,6 +80,14 @@ from models.diffusion_pose.gaussian_diffusion import (
 # print(result2.shape)
 # print(feats2.shape)
 # print(feats_pooled2.shape)
+from models.test import (
+    GraphResNetBlock,
+    CustomGraphNet,
+    MultiHeadAttentionLayer,
+    GraphTransformer,
+    LearnedPositionalEmbeddings,
+)
+from data_tools.graph_tools.graph import Graph
 
 
 def main() -> int:
@@ -85,6 +96,27 @@ def main() -> int:
     example_pose = torch.rand(bs, 3, 4)
     example_tranlation = example_pose[:, :, 3]
     example_rotation = example_pose[:, :, :3]
+
+    graph = Graph.create_random_graph(100, 3)
+    g = torch.from_numpy(graph.adjacency_matrix).unsqueeze(0)
+    h = torch.from_numpy(graph.feature_matrix).unsqueeze(0)
+    time_steps = torch.arange(0, 1, 1)
+    graph_net = CustomGraphNet(
+        in_channels=3,
+        out_channels=3,
+        channels=32,  # min 32
+        n_res_blocks=2,
+        attention_levels=[2, 4, 6, 7, 8],
+        channel_multipliers=[1, 1, 2, 2, 4, 4, 8, 8],
+        n_heads=4,
+        tf_layers=2,
+        d_cond=256,
+    )
+    # t_emb = graph_net.time_step_embedding(time_steps)
+
+    cond = torch.randn(1, 8 * 8, 256)
+    output = graph_net(adj_mat=g, feat_mat=h, time_steps=time_steps, cond=cond)
+    print(0)
 
     # print(timm.models.list_models("vit*"))
     # print(timm.version.__version__)
@@ -95,8 +127,8 @@ def main() -> int:
     )
     model.eval()
     result = model(example_img)
-    feats = model.forward_features(example_img)  # unpooled
-    feats_pooled = model.forward_head(feats, pre_logits=True)
+    feats = model.forward_features(example_img)  # unpooled 1x1024x7x7
+    feats_pooled = model.forward_head(feats, pre_logits=True)  # 1x1024
     print(result.shape)
     print(feats.shape)
     print(feats_pooled.shape)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Tuple, List, Optional
 import enum
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,18 @@ class SimplifyMode(enum.Enum):
 
 @dataclass
 class Graph:
+    """
+    A data class representing a graph, with adjacency and feature matrices.
+
+    Attributes:
+        adjacency_matrix (np.ndarray): A square matrix representing the adjacency between nodes in the graph.
+                                    The value at adjacency_matrix[i, j] represents the weight of the edge
+                                    between node i and node j. A value of 0 indicates no edge between nodes.
+        feature_matrix (np.ndarray): A matrix representing the features of each node in the graph.
+                                    Each row of the matrix corresponds to a node, and the columns represent
+                                    the feature values of that node.
+    """
+
     adjacency_matrix: np.ndarray
     feature_matrix: np.ndarray
 
@@ -32,6 +45,10 @@ class Graph:
             raise ValueError(
                 "Feature matrix must have same number of rows as adjacency matrix"
             )
+        if self.adjacency_matrix is not None:
+            self.adjacency_matrix = self.adjacency_matrix.astype(np.float32)
+        if self.feature_matrix is not None:
+            self.feature_matrix = self.feature_matrix.astype(np.float32)
 
     def __len__(self) -> int:
         """
@@ -39,6 +56,46 @@ class Graph:
             int: Number of nodes in the graph
         """
         return self.feature_matrix.shape[0]
+
+    @property
+    def num_nodes(self) -> int:
+        """
+        Returns:
+            int: Number of nodes in the graph
+        """
+        return self.feature_matrix.shape[0]
+
+    @property
+    def num_edges(self) -> int:
+        """
+        Returns:
+            int: Number of edges in the graph
+        """
+        return int(np.sum(self.adjacency_matrix) / 2)
+
+    @property
+    def num_features(self) -> int:
+        """
+        Returns:
+            int: Number of features per node in the graph
+        """
+        return self.feature_matrix.shape[1]
+
+    @property
+    def degree_matrix(self) -> np.ndarray:
+        """
+        Returns:
+            np.ndarray: A diagonal matrix where the value at node_degree_matrix[i, i] is the degree of node i
+        """
+        return np.diag(np.sum(self.adjacency_matrix, axis=1))
+
+    @property
+    def normed_degree_matrix(self) -> np.ndarray:
+        """
+        Returns:
+            np.ndarray: A diagonal matrix where the value at normed_degree_matrix[i, i] is the normed degree of node i
+        """
+        return np.diag(self.degree_matrix**-0.5)
 
     def remove_unconnected_nodes(self) -> None:
         """
@@ -51,6 +108,79 @@ class Graph:
         adjacency_matrix = np.delete(self.adjacency_matrix, unconnected_nodes, axis=0)
         self.adjacency_matrix = np.delete(adjacency_matrix, unconnected_nodes, axis=1)
         self.feature_matrix = np.delete(self.feature_matrix, unconnected_nodes, axis=0)
+
+    def transform_features_to_site(
+        self, cam_k: np.ndarray, im_w: int, im_h: int, scale: Optional[int] = None
+    ) -> None:
+        """
+        Transforms the features of the graph to site coordinates.
+
+        This method transforms the features of the graph from object coordinates to site coordinates.
+        """
+        coords_3d = self.feature_matrix[:, :3]
+        coords_2d = coords_3d @ cam_k.T
+        coords_2d[:, :2] /= coords_2d[:, 2][:, None] * np.array((im_w, im_h)).reshape(
+            1, 2
+        )
+        self.feature_matrix[:, :2] = coords_2d[:, :2].astype(np.float32)
+
+    def transform_features_to_3d_coords(self, cam_k: np.ndarray, im_w: int, im_h: int):
+        """
+        Transforms the features of the graph to 3D coordinates.
+
+        This method transforms the features of the graph from site coordinates to object coordinates.
+        """
+        coords_3d = self.feature_matrix[:, :3]
+        coords_3d[:, :2] *= coords_3d[:, 2][:, None] * np.array((im_w, im_h)).reshape(
+            1, 2
+        )
+        coords_3d = np.linalg.inv(cam_k) @ coords_3d.T
+        self.feature_matrix[:, :3] = coords_3d.T.astype(np.float32)
+
+    def add_self_loop(self) -> None:
+        """
+        Add self loop to the graph.
+
+        This method adds a self loop to the graph, by adding 1 to the diagonal of the adjacency matrix.
+        """
+        self.adjacency_matrix += np.eye(self.num_nodes)
+
+    @classmethod
+    def create_random_graph(cls, num_nodes: int, num_features: int) -> Graph:
+        """
+        Create a random graph.
+
+        Args:
+            num_nodes (int): Number of nodes in the graph.
+            num_features (int): Number of features per node in the graph.
+
+        Returns:
+            Graph: A random graph.
+        """
+        adjacency_matrix = np.random.randint(0, 2, size=(num_nodes, num_nodes))
+        adjacency_matrix = np.triu(adjacency_matrix, k=1)
+        adjacency_matrix = adjacency_matrix + adjacency_matrix.T
+        feature_matrix = np.random.rand(num_nodes, num_features)
+        return cls(adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
+
+    @classmethod
+    def create_initial_graph(cls, num_nodes: int, num_features: int) -> Graph:
+        """
+        Create a initial graph. Every node is connected to 3 other nodes.
+
+        Args:
+            num_nodes (int): Number of nodes in the graph.
+            num_features (int): Number of features per node in the graph.
+
+        Returns:
+            Graph: A initial graph.
+        """
+        adjacency_matrix = np.zeros((num_nodes, num_nodes))
+        for i, j in itertools.product(range(num_nodes), range(1, 4)):
+            adjacency_matrix[i, (i + j) % num_nodes] = 1
+            adjacency_matrix[(i + j) % num_nodes, i] = 1
+        feature_matrix = np.random.rand(num_nodes, num_features)
+        return cls(adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
 
     def save(self, path: str | Path) -> None:
         """
