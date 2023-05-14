@@ -157,13 +157,13 @@ class Graph:
             np.where(self.adjacency_matrix[i] == 1)[0] for i in range(self.num_nodes)
         ]
 
-    def set_edge_index_list(self) -> None:
+    def set_edge_index(self) -> None:
         """
         Set the edge index list of the graph.
 
         This method sets the edge index list of the graph, by converting the adjacency matrix to a list of tuples.
         """
-        self.edge_index_list = np.array(
+        self.edge_index = np.array(
             [
                 (i, j)
                 for i in range(self.num_nodes)

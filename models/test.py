@@ -12,6 +12,7 @@ import numpy as np
 from torch import Tensor
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.nn import GATv2Conv
 
 from torch_geometric.utils import softmax
 from torch_geometric.nn.inits import glorot, zeros
@@ -92,24 +93,34 @@ class CustomGraphNet(nn.Module):
             layers = [
                 GraphResNetBlock(channels, d_time_emb, out_channels=channels_list[i])
             ]
-            print(channels)
             channels = channels_list[i]
 
             if i in attention_levels:
                 layers.append(InfusionTransformer(channels, n_heads, tf_layers, d_cond))
             self.input_blocks.append(TimestepEmbedSequential(*layers))
             input_block_channels.append(channels)
-        print(self.input_blocks)
 
         self.middle_block = TimestepEmbedSequential(
             GraphResNetBlock(channels, d_time_emb),
+            # GATv2Conv(
+            #    channels, d_t_emb=d_time_emb, out_channels=channels, heads=n_heads
+            # ),
+            # GraphResNetBlock(channels, d_time_emb),
+            # GATv2Conv(
+            #    channels, d_t_emb=d_time_emb, out_channels=channels, heads=n_heads
+            # ),
             InfusionTransformer(channels, n_heads, tf_layers, d_cond),
             GraphResNetBlock(channels, d_time_emb),
+            # GATv2Conv(
+            #    channels, d_t_emb=d_time_emb, out_channels=channels, heads=n_heads
+            # ),
+            # GraphResNetBlock(channels, d_time_emb),
+            # GATv2Conv(
+            #    channels, d_t_emb=d_time_emb, out_channels=channels, heads=n_heads
+            # ),
         )
         self.output_blocks = nn.ModuleList([])
-        for i, _ in itertools.product(reversed(range(levels)), range(n_res_blocks)):
-            # for i in reversed(range(levels)):
-            #    for _ in range(n_res_blocks):  # +1
+        for i, _ in itertools.product(reversed(range(levels)), range(n_res_blocks + 1)):
             layers = [
                 GraphResNetBlock(
                     channels + input_block_channels.pop(),
@@ -153,12 +164,21 @@ class CustomGraphNet(nn.Module):
         x_input_block = []
         t_emb = self.time_step_embedding(time_steps)
         t_emb = self.time_embed(t_emb)
+        pos_enc = self.pos_emb(cond)
+        cond += pos_enc
+        # maybe concat instead
         # pos emb
         for module in self.input_blocks:
             x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
             x_input_block.append(x)
+            print(x.shape)
+        x = self.middle_block(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
 
-        return 0
+        for module in self.output_blocks:
+            x = torch.cat([x, x_input_block.pop()], dim=-1)
+            x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
+            print(x.shape)
+        return self.out(x, edge_index)
 
 
 class GraphEncoding(nn.Module):

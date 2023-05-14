@@ -99,13 +99,13 @@ def main() -> int:
     example_pose = torch.rand(bs, 3, 4)
     example_tranlation = example_pose[:, :, 3]
     example_rotation = example_pose[:, :, :3]
-    cond = torch.randn(1, 8 * 8, 256)
+    cond = torch.randn(1, 7 * 7, 1024)
 
     channels = 3
     out_channels = 3
     graph = Graph.create_random_graph(20, channels)
-    graph.set_edge_index_list()
-    graph = Graph.to_torch_geometric(graph)
+    graph.set_edge_index()
+    # graph = Graph.to_torch_geometric(graph)
     time_steps = torch.arange(0, 1, 1)
 
     ################################################
@@ -118,14 +118,37 @@ def main() -> int:
         channel_multipliers=[1, 1, 2, 2],  # 4, 4, 8, 8],
         n_heads=4,
         tf_layers=2,
-        d_cond=256,
+        d_cond=1024,
     )
     print(
         "number of parameters: ",
         sum(p.numel() for p in graph_net.parameters() if p.requires_grad),
     )
-    out = graph_net(graph.x, graph.edge_index, time_steps, cond)
+    # out = graph_net(graph.x, graph.edge_index, time_steps, cond)
+    backbone = timm.create_model(
+        model_name="maxxvitv2_rmlp_base_rw_224.sw_in12k_ft_in1k",
+        pretrained=True,
+    )
+    from models.test_diffusion import LatentDiffusion, DDPMSampler, DenoiseDiffusion
 
+    model = LatentDiffusion(
+        unet_model=graph_net,
+        backbone=backbone,
+        latent_scaling_factor=1.0,
+        n_steps=1000,
+        linear_start=0,
+        linear_end=1,
+    )
+    ddpmsampler = DDPMSampler(model)
+    ddpm = DenoiseDiffusion(model, n_steps=100, device="cpu")
+    cond = model.get_image_conditioning(example_img)  # 1, 1024, 7, 7
+    x = torch.from_numpy(graph.feature_matrix)
+    edge_index = torch.from_numpy(graph.edge_index).T
+
+    noised_feat = ddpm.q_sample(x0=x, index=3)
+    denoised_feat = ddpm.p_sample(
+        x=noised_feat, edge_index=edge_index, c=cond, t=time_steps, step=3
+    )
     ############################################
     graph_resnet = GraphResNetBlock(
         channels=channels, d_t_emb=256, out_channels=out_channels
