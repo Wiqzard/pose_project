@@ -6,6 +6,8 @@ import itertools
 from dataclasses import dataclass
 from pathlib import Path
 
+import torch
+from torch_geometric.data import Data
 import matplotlib.pyplot as plt
 import networkx as nx
 import open3d as o3d
@@ -145,6 +147,30 @@ class Graph:
         """
         self.adjacency_matrix += np.eye(self.num_nodes)
 
+    def set_adjacency_list(self) -> None:
+        """
+        Set the adjacency list of the graph.
+
+        This method sets the adjacency list of the graph, by converting the adjacency matrix to a list of lists.
+        """
+        self.adjacency_list = [
+            np.where(self.adjacency_matrix[i] == 1)[0] for i in range(self.num_nodes)
+        ]
+
+    def set_edge_index_list(self) -> None:
+        """
+        Set the edge index list of the graph.
+
+        This method sets the edge index list of the graph, by converting the adjacency matrix to a list of tuples.
+        """
+        self.edge_index_list = np.array(
+            [
+                (i, j)
+                for i in range(self.num_nodes)
+                for j in np.where(self.adjacency_matrix[i] == 1)[0]
+            ]
+        )
+
     @classmethod
     def create_random_graph(cls, num_nodes: int, num_features: int) -> Graph:
         """
@@ -181,6 +207,24 @@ class Graph:
             adjacency_matrix[(i + j) % num_nodes, i] = 1
         feature_matrix = np.random.rand(num_nodes, num_features)
         return cls(adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
+
+    @staticmethod
+    def to_torch_geometric(graph: Graph) -> Data:
+        """
+        Convert a graph to a PyTorch Geometric Data object.
+
+        Args:
+            graph (Graph): The graph to convert.
+
+        Returns:
+            Data: The converted graph.
+        """
+        if getattr(graph, "edge_index_list", None) is None:
+            graph.set_edge_index_list()
+        return Data(
+            x=torch.tensor(graph.feature_matrix),
+            edge_index=torch.tensor(graph.edge_index_list).T,
+        )
 
     def save(self, path: str | Path) -> None:
         """

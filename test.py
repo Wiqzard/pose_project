@@ -86,8 +86,11 @@ from models.test import (
     MultiHeadAttentionLayer,
     GraphTransformer,
     LearnedPositionalEmbeddings,
+    InfusionTransformer,
 )
 from data_tools.graph_tools.graph import Graph
+from torch_geometric.data import Data
+from torch_geometric.nn import GATv2Conv, TransformerConv
 
 
 def main() -> int:
@@ -96,25 +99,61 @@ def main() -> int:
     example_pose = torch.rand(bs, 3, 4)
     example_tranlation = example_pose[:, :, 3]
     example_rotation = example_pose[:, :, :3]
+    cond = torch.randn(1, 8 * 8, 256)
 
-    graph = Graph.create_random_graph(100, 3)
-    g = torch.from_numpy(graph.adjacency_matrix).unsqueeze(0)
-    h = torch.from_numpy(graph.feature_matrix).unsqueeze(0)
+    channels = 3
+    out_channels = 3
+    graph = Graph.create_random_graph(20, channels)
+    graph.set_edge_index_list()
+    graph = Graph.to_torch_geometric(graph)
     time_steps = torch.arange(0, 1, 1)
+
+    ################################################
     graph_net = CustomGraphNet(
-        in_channels=3,
-        out_channels=3,
+        in_channels=channels,
+        out_channels=out_channels,
         channels=32,  # min 32
         n_res_blocks=2,
-        attention_levels=[2, 4, 6, 7, 8],
-        channel_multipliers=[1, 1, 2, 2, 4, 4, 8, 8],
+        attention_levels=[1, 2],  # 4, 6, 7, 8],
+        channel_multipliers=[1, 1, 2, 2],  # 4, 4, 8, 8],
         n_heads=4,
         tf_layers=2,
         d_cond=256,
     )
+    print(
+        "number of parameters: ",
+        sum(p.numel() for p in graph_net.parameters() if p.requires_grad),
+    )
+    out = graph_net(graph.x, graph.edge_index, time_steps, cond)
+
+    ############################################
+    graph_resnet = GraphResNetBlock(
+        channels=channels, d_t_emb=256, out_channels=out_channels
+    )
+    gat = GATv2Conv(
+        in_channels=channels, out_channels=out_channels, heads=4, concat=False
+    )
+    tran = TransformerConv(
+        in_channels=channels, out_channels=out_channels, heads=4, concat=False
+    )
+    inf = InfusionTransformer(
+        in_channels=channels,
+        out_channels=out_channels,
+        n_heads=4,
+        n_layers=2,
+        d_cond=256,
+    )
+
+    print(graph_resnet(graph.x, graph.edge_index).shape)
+    print(inf(graph.x, graph.edge_index, cond).shape)
+    print(tran(graph.x, graph.edge_index).shape)
+    print(gat(graph.x, graph.edge_index).shape)
+
+    g = torch.from_numpy(graph.adjacency_matrix).unsqueeze(0)
+    h = torch.from_numpy(graph.feature_matrix).unsqueeze(0)
+    t_emb = graph_net.time_step_embedding(time_steps)
     # t_emb = graph_net.time_step_embedding(time_steps)
 
-    cond = torch.randn(1, 8 * 8, 256)
     output = graph_net(adj_mat=g, feat_mat=h, time_steps=time_steps, cond=cond)
     print(0)
 
