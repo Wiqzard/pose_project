@@ -93,7 +93,23 @@ from torch_geometric.data import Data
 from torch_geometric.nn import GATv2Conv, TransformerConv
 
 
+def test_dataset():
+    from utils import LOGGER
+    from data_tools.dataset import BOPDataset, Flag
+
+    dataset = BOPDataset(
+        "/Users/sebastian/Documents/Projects/pose_project/data/lm/lm",
+        Flag.TRAIN,
+        use_cache=True,
+    )
+
+    return 0
+
+
 def main() -> int:
+    test_dataset()
+
+    ################################################
     bs = 1
     example_img = torch.rand(bs, 3, 224, 224)
     example_pose = torch.rand(bs, 3, 4)
