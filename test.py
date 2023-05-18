@@ -95,14 +95,18 @@ from torch_geometric.nn import GATv2Conv, TransformerConv
 
 def test_dataset():
     from utils import LOGGER
-    from data_tools.dataset import BOPDataset, Flag
+    from data_tools.bop_dataset import BOPDataset, Flag
+    from data_tools.dataset import LMDataset
 
     dataset = BOPDataset(
-        "/Users/sebastian/Documents/Projects/pose_project/data/lm/lm",
-        Flag.TRAIN,
+        "/Users/sebastian/Documents/Projects/pose_project/data/datasets/lm",
+        Flag.TEST,
         use_cache=True,
+        single_object=True,
     )
-
+    lm_dataset = LMDataset(bop_dataset=dataset)
+    LOGGER.info(f"dataset size: {len(lm_dataset)}")
+    LOGGER.info(f"dataset[0]: {lm_dataset[0]}")
     return 0
 
 

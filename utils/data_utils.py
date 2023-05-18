@@ -1,20 +1,32 @@
 import numpy as np
 import struct
 
+
 # Function to load a 3D mesh model from a PLY file.
 def load_ply(path, vertex_scale=1.0):
     # Initialize variables and constants.
     face_n_corners = 3
     pt_props, face_props = [], []
     header_vertex_section, header_face_section = False, False
-    is_binary, is_normal, is_color, is_texture_pt, is_texture_face = False, False, False, False, False
-    model, formats = {}, {"float": ("f", 4), "double": ("d", 8), "int": ("i", 4), "uchar": ("B", 1)}
+    is_binary, is_normal, is_color, is_texture_pt, is_texture_face = (
+        False,
+        False,
+        False,
+        False,
+        False,
+    )
+    model, formats = {}, {
+        "float": ("f", 4),
+        "double": ("d", 8),
+        "int": ("i", 4),
+        "uchar": ("B", 1),
+    }
 
     # Open PLY file for reading.
     with open(path, "r") as f:
         # Process PLY header.
         texture_file, n_pts, n_faces = process_header(f)
-        
+
         if texture_file:
             model["texture_file"] = texture_file
 
@@ -29,6 +41,7 @@ def load_ply(path, vertex_scale=1.0):
     model["pts"] *= vertex_scale
 
     return model
+
 
 # Function to process the header of the PLY file.
 def process_header(f):
@@ -51,7 +64,7 @@ def process_header(f):
         elif line.startswith("element face"):
             n_faces = int(line_split[-1])
             header_vertex_section, header_face_section = False, True
-        elif line.startswith("element"):  
+        elif line.startswith("element"):
             header_vertex_section, header_face_section = False, False
         elif line.startswith("property") and header_vertex_section:
             pt_props.append(process_vertex_property(line))
@@ -64,6 +77,7 @@ def process_header(f):
             break
 
     return texture_file, n_pts, n_faces
+
 
 # Other helper functions go here... (process_vertex_property, process_face_property, prepare_model_data_structures, load_vertices, load_faces)
 def process_vertex_property(line):
@@ -115,7 +129,19 @@ def load_vertices(f, model, n_pts, pt_props, formats, is_binary):
     """Load vertices from the PLY file."""
     for pt_id in range(n_pts):
         prop_vals = {}
-        load_props = ["x", "y", "z", "nx", "ny", "nz", "red", "green", "blue", "texture_u", "texture_v"]
+        load_props = [
+            "x",
+            "y",
+            "z",
+            "nx",
+            "ny",
+            "nz",
+            "red",
+            "green",
+            "blue",
+            "texture_u",
+            "texture_v",
+        ]
         prop_vals = load_properties(f, pt_props, formats, is_binary, load_props)
         update_model_vertex(model, pt_id, prop_vals)
 
@@ -134,4 +160,4 @@ def load_properties(f, props, formats, is_binary, load_props):
     if is_binary:
         for prop in props:
             format = formats[prop[1]]
-            read_data = f.read(format
+            read_data = f.read(format)

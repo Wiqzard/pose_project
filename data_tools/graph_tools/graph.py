@@ -23,6 +23,8 @@ class SimplifyMode(enum.Enum):
     VERTEX = enum.auto()
 
 
+# TODO: seperate feature matrix to X and feature matrix, where
+#       the feature matrix has the classification and tracker of each node.
 @dataclass
 class Graph:
     """
