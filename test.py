@@ -80,7 +80,7 @@ from models.diffusion_pose.gaussian_diffusion import (
 # print(result2.shape)
 # print(feats2.shape)
 # print(feats_pooled2.shape)
-from models.test import (
+from models.custom_graphnet import (
     GraphResNetBlock,
     CustomGraphNet,
     MultiHeadAttentionLayer,
@@ -104,6 +104,7 @@ def test_dataset():
         use_cache=True,
         single_object=True,
     )
+    # dataset.generate_graphs(simplify_factor=10, img_width=640, img_height=480)
     lm_dataset = LMDataset(bop_dataset=dataset)
     LOGGER.info(f"dataset size: {len(lm_dataset)}")
     LOGGER.info(f"dataset[0]: {lm_dataset[0]}")
@@ -111,7 +112,11 @@ def test_dataset():
 
 
 def main() -> int:
-    test_dataset()
+    # graph = Graph.load(
+    #     "/Users/sebastian/Documents/Projects/pose_project/data/datasets/lm/test/000005/graphs/000007_000000.npz"
+    # )
+    # graph.visualize()
+    #test_dataset()
 
     ################################################
     bs = 1
@@ -140,6 +145,7 @@ def main() -> int:
         tf_layers=2,
         d_cond=1024,
     )
+    graph_net(torch.from_numpy(graph.feature_matrix), torch.from_numpy(graph.edge_index), time_steps, cond)
     print(
         "number of parameters: ",
         sum(p.numel() for p in graph_net.parameters() if p.requires_grad),
@@ -149,7 +155,7 @@ def main() -> int:
         model_name="maxxvitv2_rmlp_base_rw_224.sw_in12k_ft_in1k",
         pretrained=True,
     )
-    from models.test_diffusion import LatentDiffusion, DDPMSampler, DenoiseDiffusion
+    from engine.diffusion.ddpm import LatentDiffusion, DDPMSampler, DenoiseDiffusion
 
     model = LatentDiffusion(
         unet_model=graph_net,

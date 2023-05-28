@@ -244,7 +244,7 @@ class Graph:
     @classmethod
     def load(cls, path: str | Path) -> Graph:
         """
-        Load a graph from disk.
+        Load a graph from diska, concat=True, negative_slope=0.2, dropout=0.5)
 
         Args:
             path (str): Path to load the graph from.
@@ -472,9 +472,24 @@ def remove_invisible_vertices(
     transformation_matrix[:3, :] = pose
     projected_points = project_points(vertices, intrinsic_matrix)
     visible_mask = visible_vertices_mask(projected_points, img_width, img_height)
-    visible_vertices = vertices[visible_mask]
+    # visible_vertices = vertices[visible_mask]
+
+    visible_vertices = vertices
+
+    visible_mask_indices = np.where(~visible_mask)[0]
+
     visible_faces = remove_hidden_vertices(
         visible_vertices, faces, transformation_matrix
+    )
+
+    visible_vertices = visible_vertices[visible_mask]
+
+    visible_faces = np.asarray(
+        [
+            face
+            for face in visible_faces
+            if not np.any(np.isin(visible_faces, visible_mask_indices))
+        ]
     )
 
     new_mesh = o3d.geometry.TriangleMesh(

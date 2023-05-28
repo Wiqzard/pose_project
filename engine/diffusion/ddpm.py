@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import List, Any, Optional, Tuple
 
-from models.test import CustomGraphNet
+from models.custom_graphnet import CustomGraphNet
 
 import numpy as np
 import torch
@@ -12,7 +12,7 @@ from torch import nn
 def gather(consts: torch.Tensor, t: torch.Tensor):
     """Gather consts for $t$ and reshape to feature map shape"""
     c = consts.gather(-1, t)
-    return c.reshape(-1, 1, 1, 1)
+    return c.reshape(-1, 1, 1)
 
 
 class DenoiseDiffusion:
@@ -20,7 +20,7 @@ class DenoiseDiffusion:
     Denoise Diffusion
     """
 
-    def __init__(self, eps_model: nn.Module, n_steps: int, device: torch.device):
+    def __init__(self, eps_model: nn.Module, cond_model:nn.Module, n_steps: int, device: torch.device):
         """
         Args:
             eps_model: The εₜₕₑₜₐ(xₜ, t) model
@@ -28,6 +28,7 @@ class DenoiseDiffusion:
             device: The device to place constants on
         """
         super().__init__()
+        self.cond_stage_model = cond_model
         self.eps_model = eps_model
 
         # Create $\beta_1, \dots, \beta_T$ linearly increasing variance schedule
@@ -71,7 +72,7 @@ class DenoiseDiffusion:
         # Sample from $q(x_t|x_0)$
         return mean + (var**0.5) * eps
 
-    def p_sample(self, xt: torch.Tensor, t: torch.Tensor):
+    def p_sample(self, xt: torch.Tensor, edge_index: torch.Tensor, t: torch.Tensor):
         """
         Sample from pₜₕₑₜₐ(xₜ₋₁|xₜ)
             pₜₕₑₜₐ(xₜ₋₁ | xₜ) = 𝒩(xₜ₋₁; μₜₕₑₜₐ(xₜ, t), σₜ²𝐈)
@@ -97,7 +98,24 @@ class DenoiseDiffusion:
         # Sample
         return mean + (var**0.5) * eps
 
-    def loss(self, x0: torch.Tensor, noise: Optional[torch.Tensor] = None):
+    def get_image_conditioning(self, imgs: torch.Tensor):
+        """
+        Get image conditioning
+        Args:
+            images: Image tensor (B, C, H, W)
+        Returns:
+            Image conditionins: tensor (B, H'*W', C')
+        """
+        return (
+            self.cond_stage_model.forward_features(imgs).flatten(2).permute(0, 2, 1)
+        )
+    def loss(
+        self,
+        img: torch.Tensor,
+        x0: torch.Tensor,
+        edge_index: torch.Tensor,
+        noise: Optional[torch.Tensor] = None,
+    ):
         """
         Simplified Loss L_simple(θ) = 𝔼_{t,x₀,ε} ⎡⎣ ∥ε - ε̂ₜₕₑₜₐ(√𝐚̄ₜ x₀ + √(1-𝐚̄ₜ)ε, t) ∥² ⎤⎦
         """
@@ -115,7 +133,8 @@ class DenoiseDiffusion:
         # Sample $x_t$ for $q(x_t|x_0)$
         xt = self.q_sample(x0, t, eps=noise)
         # Get $\textcolor{lightgreen}{\epsilon_\theta}(\sqrt{\bar\alpha_t} x_0 + \sqrt{1-\bar\alpha_t}\epsilon, t)$
-        eps_theta = self.eps_model(xt, t)
+        cond = self.get_image_conditioning(img)
+        eps_theta = self.eps_model(xt, edge_index, t, cond)
 
         # MSE loss
         return F.mse_loss(noise, eps_theta)

@@ -21,15 +21,28 @@ class LMDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index: int) -> tuple:
-        img = self.get_img(index)
-        obj_ids = self.get_obj_ids(index)
+        # a = self.dataset.models
+        img = self.get_img(index) / 255.0
+        img = torch.from_numpy(img).float().permute(2, 0, 1)
+        # resize image to 224x224
+        img = torch.nn.functional.interpolate(img.unsqueeze(0), size=224).squeeze(0)
+        obj_id = self.get_obj_ids(index)
+        obj_id = torch.tensor(obj_id)
         cam = self.get_cam(index)
-        bbox_objs = self.get_bbox_objs(index)
-        bbox_visibs = self.get_bbox_visibs(index)
-        masks = self.get_masks(index)
-        visib_masks = self.get_visib_masks(index)
-        pose = self.get_poses(index)
-        return self.dataset[index]
+        cam = torch.from_numpy(cam).float()
+        # bbox_objs = self.get_bbox_objs(index)
+        # bbox_visibs = self.get_bbox_visibs(index)
+        # masks = self.get_masks(index)
+        # visib_masks = self.get_visib_masks(index)
+        pose = self.get_poses(index)[0]
+        pose = torch.from_numpy(pose).float()
+
+        graph = self.get_graph(index)
+        graph.set_edge_index()
+        x = torch.from_numpy(graph.feature_matrix).float().T
+        edge_index = torch.from_numpy(graph.edge_index).long().T
+        out = {"img":img, "obj_id":obj_id, "cam":cam, "pose":pose, "x":x, "edge_index":edge_index}
+        return out
 
     def get_img(self, idx: int) -> np.ndarray:
         """
@@ -173,3 +186,18 @@ class LMDataset(Dataset):
             An array containing the extents of each model, in the format [size_x, size_y, size_z].
         """
         return self.dataset.extents
+
+    def get_graph(self, idx: int) -> Graph:
+        """
+        Get the graph for the image at the given index.
+
+        Args:
+            idx (int): The index of the image.
+
+        Returns:
+            Graph: The graph for the image.
+        """
+        #path = Path(self.dataset.get_graph_paths(idx)[0])
+        #print(path.exists())
+        graph = Graph.load(self.dataset.get_graph_paths(idx)[0])
+        return graph

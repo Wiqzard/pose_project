@@ -12,8 +12,10 @@ import open3d as o3d
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+from data_tools.graph_tools.graph import Graph
 
 from utils import LOGGER, RANK
+
 
 
 class Flag(enum.Enum):
@@ -87,16 +89,15 @@ class BOPDataset:
         if not self._path.is_dir():
             raise FileNotFoundError(f"Path {self._path} does not exist.")
 
-        self.models_root = self._path / "models"
-        self.models_eval_root = self._path / "models_eval"
-
         if self.flag == Flag.TRAIN:
             self.split_path = self._path / "train_pbr"
+            self.models_root = self._path / "models"
         elif self.flag == Flag.VAL:
             raise ValueError("Validation set not implemented yet.")
         elif self.flag == Flag.TEST:
             self.split_path = self._path / "test"
-        self.split_graphs_path = self.split_path / "graphs"
+            self.models_root = self._path / "models_eval"
+        # self.split_graphs_path = self.split_path / "graphs"
 
         self.model_names = [
             f"{int(file.stem.split('_')[-1]):06d}"
@@ -107,7 +108,12 @@ class BOPDataset:
             for folder in self.split_path.iterdir()
             if folder.is_dir() and folder.name.isdigit()
         ]
-        self._models = None
+        from time import perf_counter
+
+        start = perf_counter()
+        self._load_models()
+        end = perf_counter()
+        print(f"Loading models took {end - start} seconds.")
 
         self.cache_path = (
             Path.cwd()
@@ -122,7 +128,6 @@ class BOPDataset:
                 )
         else:
             self._dataset = self._create_dataset()
-
             self._dataset_to_single_view() if single_object else None
             self._cache()
 
@@ -216,7 +221,7 @@ class BOPDataset:
             - pose: A list of object poses in the image.
             - mask_path: A list of paths to the masks for the objects in the image.
             - mask_visib_path: A list of paths to the visible masks for the objects in the image.
-            - xyz_path: A list of paths to the XYZ data for the objects in the image.
+            - graph_path: A list of paths to the XYZ data for the objects in the image.
         """
 
         annotations = {
@@ -226,6 +231,7 @@ class BOPDataset:
             "pose": [],
             "mask_path": [],
             "mask_visib_path": [],
+            "graph_path": [],
         }
         for anno_i, anno in enumerate(gt_dict[str_im_id]):
             obj_id = anno["obj_id"]
@@ -241,18 +247,19 @@ class BOPDataset:
             )
 
             mask_path = str(
-                scene_root
-                / "mask"
-                / "{:06d}_{:06d}.jpg".format(int(str_im_id), int(anno_i)),
+                scene_root / "mask" / f"{int(str_im_id):06d}_{int(anno_i):06d}.jpg"
             )
             mask_path = correct_suffix(mask_path)
 
             mask_visib_path = str(
                 scene_root
                 / "mask_visib"
-                / "{:06d}_{:06d}.jpg".format(int(str_im_id), int(anno_i)),
+                / f"{int(str_im_id):06d}_{int(anno_i):06d}.jpg"
             )
             mask_visib_path = correct_suffix(mask_visib_path)
+            graph_path = str(
+                scene_root / "graphs" / f"{int(str_im_id):06d}_{int(anno_i):06d}.npz"
+            )
 
             annotations["obj_id"].append(obj_id)
             annotations["bbox_obj"].append(bbox_obj)
@@ -260,6 +267,7 @@ class BOPDataset:
             annotations["pose"].append(pose)
             annotations["mask_path"].append(mask_path)
             annotations["mask_visib_path"].append(mask_visib_path)
+            annotations["graph_path"].append(graph_path)
 
         # if bbox_visib only zeros return None
         if (
@@ -346,7 +354,7 @@ class BOPDataset:
         return dataset
 
     @property
-    def models_info(self):
+    def models_info(self) -> Dict[str, Any]:
         """
         Load the models_info.json file for the current dataset.
 
@@ -360,33 +368,86 @@ class BOPDataset:
             models_info = json.load(f)
         return models_info
 
-    @property
-    def models(self):
+    def _load_models(self) -> None:
         """
         Load the models for the current dataset.
-
-        Returns:
-            A list of dictionaries, each containing information about a single model in the dataset.
+        Format:
+        {model_num:int : model:o3d.geometry.TriangleMesh}
         """
-        cache_path = self.models_root / f"models_{self.dataset_name}.pkl"
-        if self._models:
-            return self._models
-        if cache_path.exists() and self.use_cache:
-            with open(cache_path, "rb") as f:
-                self._models = pickle.load(f)
-            return self._models
-        models = []
-        for model_num in self.model_names:
-            model = load_ply(
-                self.models_root / f"obj_{model_num}.ply",
-                vertex_scale=self.scale_to_meter,
+        self.models = {
+            int(model_num): o3d.io.read_triangle_mesh(
+                str(self.models_root / f"obj_{model_num}.ply")
             )
-            models.append(model)
-        LOGGER.info(f"cache models to {cache_path}")
-        with open(cache_path, "wb+") as f:
-            pickle.dump(models, f)
-        self._models = models
-        return models
+            for model_num in self.model_names
+        }
+
+    def generate_graphs(
+        self, simplify_factor: int, img_width: int, img_height: int
+    ) -> None:
+        """
+        Generate the graphs for the current dataset.
+        """
+        if not self.single_object:
+            raise NotImplementedError(
+                "Graphs are only supported for single object datasets"
+            )
+        #        if self.graphs_root.exists():
+        # LOGGER.info("Graphs already exist. Skipping generation.")
+        # return
+        # self.graphs_root.mkdir(parents=True, exist_ok=True)
+        from data_tools.graph_tools.graph import Graph, prepare_mesh
+
+        LOGGER.info("Generating graphs.")
+        dataset = self._dataset["raw_img_dataset"]
+        for entry in tqdm(dataset):
+            cam = entry["cam"]  # np.ndarray
+            annotation = entry["annotation"]
+            obj_id = annotation["obj_id"][0]  # int
+            pose = annotation["pose"][0]  # np.ndarray
+            graph_path = annotation["graph_path"][0]  # str
+            if not Path(graph_path).parent.is_dir():
+                Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+            model = self.models[obj_id]
+            mesh = prepare_mesh(
+                mesh=model,
+                simplify_factor=simplify_factor,
+                pose=pose,
+                intrinsic_matrix=cam,
+                img_width=img_width,
+                img_height=img_height,
+            )
+            graph = Graph.from_mesh(mesh)
+            graph.remove_unconnected_nodes()
+            graph.save(graph_path)
+        return 0
+
+    #    @property
+    #    def models(self) -> np.ndarray:
+    #        """
+    #        Load the models for the current dataset.
+    #
+    #        Returns:
+    #            A list of dictionaries, each containing information about a single model in the dataset.
+    #        """
+    #        cache_path = self.models_root / f"models_{self.dataset_name}.pkl"
+    #        if self._models is not None:
+    #            return self._models
+    #        if cache_path.exists() and self.use_cache:
+    #            with open(cache_path, "rb") as f:
+    #                self._models = pickle.load(f)
+    #            return self._models
+    #        models = []
+    #        for model_num in self.model_names:
+    #            model = load_ply(
+    #                self.models_root / f"obj_{model_num}.ply",
+    #                vertex_scale=self.scale_to_meter,
+    #            )
+    #            models.append(model)
+    #        LOGGER.info(f"cache models to {cache_path}")
+    #        with open(cache_path, "wb+") as f:
+    #            pickle.dump(models, f)
+    #        self._models = models
+    #        return models
 
     @property
     def extents(self) -> np.ndarray:
@@ -470,6 +531,11 @@ class BOPDataset:
         return copy.deepcopy(
             self._dataset["raw_img_dataset"][idx]["annotation"]["pose"]
         )
+    
+    @require_dataset
+    def get_graph_paths(self, idx:int) -> Graph:
+       return self._dataset["raw_img_dataset"][idx]["annotation"]["graph_path"]
+        
 
 
 def load_ply(path, vertex_scale=1.0):

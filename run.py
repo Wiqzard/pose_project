@@ -10,7 +10,7 @@ from models.graph_attention.gan import GraphAttentionNetwork
 - Direct Method (CNN) for general test (CNN 256 to 64, add coord2d, Cnn to regression)
 """
 
-from models.graph_transformer.fast_gtn import FastGTN
+# from models.graph_transformer.fast_gtn import FastGTN
 import argparse
 
 
@@ -21,14 +21,14 @@ def main() -> int:
         node_dim=256,
         num_layers=2,
     )
-    model = FastGTN(num_edge_type=1, w_in=256, num_class=6, num_nodes=100, args=args)
-    input_ = Graph.create_random_graph(100, 256)
-    init_garph = Graph.create_initial_graph(100, 3)
-    batch_A = torch.from_numpy(input_.adjacency_matrix).unsqueeze(-1)
-    batch_X = torch.from_numpy(input_.feature_matrix)
-    batch_num_nodes = torch.tensor([100])
-    output = model(batch_A, batch_X, batch_num_nodes)
-
+    # model = FastGTN(num_edge_type=1, w_in=256, num_class=6, num_nodes=100, args=args)
+    #    input_ = Graph.create_random_graph(100, 256)
+    #    init_garph = Graph.create_initial_graph(100, 3)
+    #    batch_A = torch.from_numpy(input_.adjacency_matrix).unsqueeze(-1)
+    #    batch_X = torch.from_numpy(input_.feature_matrix)
+    #    batch_num_nodes = torch.tensor([100])
+    #    output = model(batch_A, batch_X, batch_num_nodes)
+    #
     print("halt")
     mesh = o3d.io.read_triangle_mesh(
         "/Users/sebastian/Documents/Projects/pose_project/data/datasets/obj_000006.ply"
@@ -45,7 +45,7 @@ def main() -> int:
     ).reshape(3, 3)
     mesh = prepare_mesh(
         mesh=mesh,
-        simplify_factor=10,
+        simplify_factor=100,  # 10
         pose=pose,
         intrinsic_matrix=cam_K,
         img_width=640,
@@ -55,6 +55,7 @@ def main() -> int:
     graph.remove_unconnected_nodes()
     graph.transform_features_to_site(cam_k=cam_K, im_w=640, im_h=480)
     graph.transform_features_to_3d_coords(cam_k=cam_K, im_w=640, im_h=480)
+    graph.visualize()
     random_graph = Graph.create_random_graph(100, 3)
     # graph.visualize()
     num_features = graph.num_features

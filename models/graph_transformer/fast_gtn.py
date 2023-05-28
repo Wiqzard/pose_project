@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import math
 
 
-import torch_sparse
+# import torch_sparse
 from torch_geometric.utils import softmax
 
 from .gcn import GCNConv
