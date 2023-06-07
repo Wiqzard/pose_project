@@ -9,6 +9,28 @@ from data_tools.bop_dataset import BOPDataset, Flag
 from data_tools.dataset import LMDataset
 
 
+def graph_collate_fn(batch):
+    x = batch["x"]
+    bs = len(x)
+    edge_index = batch["edge_index"]
+    adj_matrix = batch["adj_matrix"]
+    x = torch.stack((y for y in x), dim=0) 
+
+    
+
+def train2():
+    dataset = BOPDataset(
+        "/Users/sebastian/Documents/Projects/pose_project/data/datasets/lm",
+        Flag.TEST,
+        use_cache=True,
+        single_object=True,
+    )
+    # dataset.generate_graphs(simplify_factor=10, img_width=640, img_height=480)
+    lm_dataset = LMDataset(bop_dataset=dataset)
+    train_loader = DataLoader(lm_dataset, batch_size=1, shuffle=False, collate_fn=graph_collate_fn)
+    a = next(iter(train_loader))
+
+
 def train():
     dataset = BOPDataset(
         "/Users/sebastian/Documents/Projects/pose_project/data/datasets/lm",
@@ -62,7 +84,7 @@ def train():
 
 
 def main() -> int:
-    train()
+    train2()
 
 
 if __name__ == "__main__":

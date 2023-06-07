@@ -12,9 +12,70 @@ from models.graph_attention.gan import GraphAttentionNetwork
 
 # from models.graph_transformer.fast_gtn import FastGTN
 import argparse
+import trimesh
+import sklearn
 
+
+def test_trimesh():
+    mesh = trimesh.load_mesh(
+        "/Users/sebastian/Documents/Projects/pose_project/data/datasets/obj_000006.ply"
+    )
+    points, index = trimesh.sample.sample_surface_even(mesh, 100)
+    triangles = mesh.triangles[index]
+    pt1 = triangles[:, 0, :]
+    pt2 = triangles[:, 1, :]
+    pt3 = triangles[:, 2, :]
+    norm = np.cross(pt3 - pt1, pt2 - pt1)
+    norm = sklearn.preprocessing.normalize(norm, axis=1)
+    return 0
+
+
+def test_reconstruction():
+    mesh = o3d.io.read_triangle_mesh(
+        "/Users/sebastian/Documents/Projects/pose_project/data/datasets/obj_000006.ply"
+    )
+    mesh2 = o3d.io.read_triangle_mesh(
+        "/Users/sebastian/Documents/Projects/pose_project/data/datasets/obj_000005.ply")
+    print(np.asarray(mesh.vertices).shape)
+    print(np.asarray(mesh2.vertices).shape)
+    pt = mesh.sample_points_poisson_disk(number_of_points=300)
+    #pt  = mesh.sample_points_uniformly(number_of_points=200)
+    pt2 = mesh2.sample_points_uniformly(number_of_points=300)
+    print(np.asarray(pt.points).shape) 
+    print(np.asarray(pt2.points).shape)
+    
+    #mesh = trimesh.load_mesh(
+    #    "/Users/sebastian/Documents/Projects/pose_project/data/datasets/obj_000006.ply"
+    #    )
+    #points, index = trimesh.sample.sample_surface_even(mesh, 100)
+    #pcd = o3d.geometry.PointCloud()
+    #pcd.points = o3d.utility.Vector3dVector(points)
+    #pcd.estimate_normals()
+
+    # hidden point removal possible for pointclouds (need to transform pose first)
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pt)[0]
+    mesh2 = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pt2)[0]
+    #mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pt, alpha=0.1)
+    #o3d.visualization.draw_geometries([pt])
+    #mesh = pt.compute_convex_hull()[0]
+    #mesh.compute_vertex_normals()
+    print(np.asarray(mesh.vertices).shape)
+    print(np.asarray(mesh2.vertices).shape)
+    #mesh = pt.estimate_normals()
+    o3d.visualization.draw_geometries([mesh])
+    return 0
+
+
+import pickle
 
 def main() -> int:
+
+    path = "/Users/sebastian/Documents/Projects/pose_project/data/datasets/info_ellipsoid.dat"
+    with open(path, "rb") as f:
+        info = pickle.load(f)
+    test_reconstruction()
+    #test_trimesh()
+
     args = argparse.Namespace(
         non_local=False,
         num_channels=256,
@@ -45,14 +106,17 @@ def main() -> int:
     ).reshape(3, 3)
     mesh = prepare_mesh(
         mesh=mesh,
-        simplify_factor=100,  # 10
+        #simplify_factor=10,  # 10
+        num_vertices=100,
         pose=pose,
         intrinsic_matrix=cam_K,
         img_width=640,
         img_height=480,
+        only_front_facing=False,
     )
+    print(np.asarray(mesh.vertices).shape)
     graph = Graph.from_mesh(mesh)
-    graph.remove_unconnected_nodes()
+    # graph.remove_unconnected_nodes()
     graph.transform_features_to_site(cam_k=cam_K, im_w=640, im_h=480)
     graph.transform_features_to_3d_coords(cam_k=cam_K, im_w=640, im_h=480)
     graph.visualize()

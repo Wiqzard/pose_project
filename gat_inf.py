@@ -35,6 +35,25 @@ class AttentionMode(Enum):
     """
     GAT = auto()
     TRANS = auto()
+
+
+class TimestepEmbedSequential(nn.Sequential):
+    """
+    ### Sequential block for modules with different inputs
+
+    This sequential module can compose of different modules suck as `ResBlock`,
+    `nn.Conv` and `SpatialTransformer` and calls them with the matching signatures
+    """
+
+    def forward(self, x, edge_index, t_emb, cond=None):
+        for layer in self:
+            if isinstance(layer, GraphResNetBlock):
+                x = layer(x=x, edge_index=edge_index, t_emb=t_emb)
+            elif isinstance(layer, Gatv2CrossAttention) or isinstance(layer, TransformerCrossAttention):
+                x = layer(x=x, edge_index=edge_index, cond=cond)
+            else:
+                x = layer(x=x, edge_index=edge_index)
+        return x
     
 class GraphNet(nn.Module):
     def __init__(
@@ -47,7 +66,6 @@ class GraphNet(nn.Module):
         attention_mode: AttentionMode,
         channel_multipliers: List[int],
         n_heads: int,
-        tf_layers: int = 1,
         d_cond: int = 1024,
     ) -> None:
         """
@@ -69,19 +87,20 @@ class GraphNet(nn.Module):
         
         self.pos_emb = LearnedPositionalEmbeddings(d_model=d_cond)
         
+
+        if attention_mode == AttentionMode.GAT:
+            attention_layer = Gatv2CrossAttention
+        elif attention_mode == AttentionMode.TRANS:
+            attention_layer = TransformerCrossAttention
+        else:
+            raise ValueError(f"Unknown attention mode: {attention_mode}")
+
         self.input_blocks = nn.ModuleList([])
         self.input_blocks.append(
-            GCNConv(in_channels, channels)
+            TimestepEmbedSequential(GCNConv(in_channels, channels))
         )
         input_block_channels = [channels]
         channels_list = [channels * m for m in channel_multipliers]
-
-        if attention_mode == AttentionMode.GAT:
-            attention_layer = Gatv2CrossAttention()
-        elif attention_mode == AttentionMode.TRANS:
-            attention_layer = TransformerCrossAttention() 
-        else:
-            raise ValueError(f"Unknown attention mode: {attention_mode}")
 
         for i, _ in itertools.product(range(levels), range(n_res_blocks + 1)):
             layers = [
@@ -90,10 +109,49 @@ class GraphNet(nn.Module):
             channels = channels_list[i]
 
             if i in attention_levels:
-                layers.append(InfusionTransformer(channels, n_heads, tf_layers, d_cond))
+                layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
+
             self.input_blocks.append(TimestepEmbedSequential(*layers))
             input_block_channels.append(channels)
 
+        self.middle_block = TimestepEmbedSequential(
+            GraphResNetBlock(channels, d_time_emb),
+            attention_layer(channels, channels, n_heads, d_cond, concat=False),
+            GraphResNetBlock(channels, d_time_emb),
+        )
+
+        self.output_blocks = nn.ModuleList([])
+        for i, _ in itertools.product(reversed(range(levels)), range(n_res_blocks + 1)):
+            layers = [
+                GraphResNetBlock(
+                    channels, #+ input_block_channels.pop(),
+                    d_time_emb,
+                    out_channels=channels_list[i],
+                )
+            ]
+            channels = channels_list[i]
+            if i in attention_levels:
+                layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
+            self.output_blocks.append(TimestepEmbedSequential(*layers))
+
+        self.out_norm =nn.GroupNorm(16, channels)
+        self.out_act = nn.SiLU()
+        self.out = GCNConv(channels, out_channels)
+
+    def forward(self, x, edge_index, t_emb=None, cond=None):
+
+        for module in self.input_blocks:
+            x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
+            #x_input_block.append(x)
+            print(x.shape)
+        x = self.middle_block(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
+
+        for module in self.output_blocks:
+            #x = torch.cat([x, x_input_block.pop()], dim=-1)
+            x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
+            print(x.shape)
+        return self.out(x, edge_index)    
+            
 class Gatv2CrossAttention(MessagePassing):
     _alpha: OptTensor
 
@@ -548,19 +606,33 @@ def main() -> int:
     x = torch.from_numpy(graph.feature_matrix)
     edge_index = torch.from_numpy(graph.edge_index).T
     cond = torch.randn(10, 49, 1024)
-    gat_v2 = Gatv2CrossAttention(
-        16, 32, n_heads=8, concat=False
-    )  # concat True, returns 128
-    trans = TransformerCrossAttention(16, 32, n_heads=8, concat=False)
+    #gat_v2 = Gatv2CrossAttention(
+    #    16, 32, n_heads=8, concat=False
+    #)  # concat True, returns 128
+    #trans = TransformerCrossAttention(16, 32, n_heads=8, concat=False)
 
+    graph_net = GraphNet(
+        in_channels=16, 
+        out_channels=3, 
+        channels=16,
+        n_res_blocks=2,
+        attention_levels=[1, 2],
+        attention_mode=AttentionMode.GAT,
+        channel_multipliers=[1, 1, 2],
+        n_heads=4,
+        d_cond=1024,
+    )
+    print("graph_net params: ", sum(p.numel() for p in graph_net.parameters()))
+    out = graph_net(x, edge_index, cond=cond)
     # out = gat_v2(x, edge_index, cond)
-    out2 = trans(x, edge_index, cond)
+    #out2 = trans(x, edge_index, cond)
     # cross = CrossAttention(16, 1024, 4, 32)
     # cross_out = cross(x, cond)
     # spat_trans = SpatialTransformer(16, 4, 4, 1024)
     # print number of parameters
-    print("gatv2: ", sum(p.numel() for p in gat_v2.parameters()))
-    print("transformer: ", sum(p.numel() for p in trans.parameters()))
+    #print("gatv2: ", sum(p.numel() for p in gat_v2.parameters()))
+    #print("transformer: ", sum(p.numel() for p in trans.parameters()))
+
     # print( sum(p.numel() for p in spat_trans.parameters()))
     # out = spat_trans(x, edge_index, cond)
     #   out = cross(x, cond)

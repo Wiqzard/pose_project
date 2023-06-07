@@ -4,11 +4,12 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from torch.nn import Sequential
+#from torch.nn import Sequential
 from torch import Tensor
 import torch.nn.functional as F
 
 from torch_geometric.nn import GCNConv
+from torch_geometric.nn import Sequential
 
 
 class GeGLU(nn.Module):
@@ -48,7 +49,7 @@ class GraphResNetBlock(nn.Module):
     def __init__(
         self,
         channels: int,
-        *,
+
         d_t_emb: Optional[int] = None,
         out_channels: Optional[int] = None
     ):

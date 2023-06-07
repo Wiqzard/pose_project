@@ -41,7 +41,8 @@ class LMDataset(Dataset):
         graph.set_edge_index()
         x = torch.from_numpy(graph.feature_matrix).float().T
         edge_index = torch.from_numpy(graph.edge_index).long().T
-        out = {"img":img, "obj_id":obj_id, "cam":cam, "pose":pose, "x":x, "edge_index":edge_index}
+        adj_matrix = torch.from_numpy(graph.adjacency_matrix).float()
+        out = {"img":img, "obj_id":obj_id, "cam":cam, "pose":pose, "x":x, "edge_index":edge_index, "adj_matrix":adj_matrix}
         return out
 
     def get_img(self, idx: int) -> np.ndarray:
