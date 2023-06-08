@@ -122,13 +122,13 @@ class BOPDataset:
         )
         if use_cache and self.cache_path.is_file():
             self._load_cache()
-            if self._dataset["single_object"] != self.single_object:
+            if bool(self._dataset["single_object"]) != self.single_object:
                 raise ValueError(
                     "Dataset was cached with different single_object flag."
                 )
         else:
             self._dataset = self._create_dataset()
-            self._dataset_to_single_view() if single_object else None
+            #self._dataset_to_single_view() if single_object else None
             self._cache()
 
     def _load_cache(self) -> None:
@@ -341,6 +341,7 @@ class BOPDataset:
         dataset = {
             "dataset_name": self.dataset_name,
             "models_info": self.models_info,
+            "single_object": self.single_object,
             "raw_img_dataset": [],
         }
         if RANK in {-1, 0}:

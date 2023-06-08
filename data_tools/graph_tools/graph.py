@@ -39,16 +39,22 @@ class Graph:
                                     the feature values of that node.
     """
 
-    adjacency_matrix: np.ndarray
-    feature_matrix: np.ndarray
+    adjacency_list: Optional[np.ndarray] = None
+    adjacency_matrix: Optional[np.ndarray] = None
+    edge_index: Optional[np.ndarray] = None
+    feature_matrix: np.ndarray = None
 
     def __post_init__(self):
+        
+        if self.adjacency_matrix is None and self.edge_index_list is not None:
+            self.adjacency_matrix =  edge_index_to_adjacency_matrix(self.edge_index_list)
         if self.adjacency_matrix.shape[0] != self.adjacency_matrix.shape[1]:
             raise ValueError("Adjacency matrix must be square")
         if self.adjacency_matrix.shape[0] != self.feature_matrix.shape[0]:
             raise ValueError(
                 "Feature matrix must have same number of rows as adjacency matrix"
             )
+        
         if self.adjacency_matrix is not None:
             self.adjacency_matrix = self.adjacency_matrix.astype(np.float32)
         if self.feature_matrix is not None:
@@ -210,6 +216,65 @@ class Graph:
         feature_matrix = np.random.rand(num_nodes, num_features)
         return cls(adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
 
+    @classmethod
+    def create_initial_graph_2(cls, centers: np.ndarray) -> Graph:
+        """
+        Create a initial graph. Places a tetrahedron on the centers. Returns 
+        graph in site coordinates with a z coordinate of 0.5.
+        
+        Args:
+            centers (np.ndarray): Centers of the objects in SITE. Shape (num_objects, 2).
+        
+        Returns:
+            Graph: A initial graph.
+        """
+        length = 0.1
+        tetrahedron = np.array(
+            [
+                [0, 0, 0],
+                [length, 0, 0],
+                [length/ 2, length * np.sqrt(3) / 2, 0],
+                [length/2, length / (2 * np.sqrt(3)), length * np.sqrt(2 / 3)],
+            ]
+        )
+        tetra_adjacency_matrix = np.array(
+            [
+                [0, 1, 1, 1],
+                [1, 0, 1, 1],
+                [1, 1, 0, 1],
+                [1, 1, 1, 0],
+            ]
+        )
+        edge_index = np.array(
+            [  
+                [0, 1],
+                [0, 2],
+                [0, 3],
+                [1, 2],
+                [1, 3],
+                [2, 3],
+            ]
+        )
+        
+            
+        tetrahedron -= np.mean(tetrahedron, axis=0)
+        initial_features = np.tile(tetrahedron, (centers.shape[0], 1))
+        centers_adj = np.repeat(centers, centers.shape[0], axis=0)
+        initial_features[:, :2] += centers_adj
+        initial_features[:, 2] += 0.5
+        num_nodes = centers.shape[0] *4
+        #new_edge_index = np.tile(edge_index, (centers.shape[0], 1))
+        #new_edge_index[:, 0] += np.repeat(np.arange(centers.shape[0]), 6) * 4
+        #new_edge_index[:, 1] += np.repeat(np.arange(centers.shape[0]), 6) * 4
+
+        #return cls(edge_index=new_edge_index, feature_matrix=initial_features)
+        
+        adjacency_matrix = np.zeros((num_nodes, num_nodes))
+        for i in range(centers.shape[0]):
+            adjacency_matrix[i*4:(i+1)*4, i*4:(i+1)*4] = tetra_adjacency_matrix[:4, :4]
+        return cls(adjacency_matrix=adjacency_matrix, feature_matrix=initial_features)
+        
+
     @staticmethod
     def to_torch_geometric(graph: Graph) -> Data:
         """
@@ -282,8 +347,8 @@ class Graph:
             mesh.simplify_quadric_decimation(kwargs)
         elif simplify_mode == SimplifyMode.VERTEX:
             mesh.simplify_vertex_clustering(kwargs)
-        adjacency_matrix, feature_matrix = mesh_to_graph(mesh)
-        return cls(adjacency_matrix, feature_matrix)
+        adjacency_list ,adjacency_matrix, feature_matrix = mesh_to_graph(mesh)
+        return cls(adjacency_list=adjacency_list, adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
 
     def visualize(self) -> None:
         """
@@ -308,6 +373,15 @@ class Graph:
         ax.set_zlabel("Z-axis")
         plt.show()
 
+
+def edge_index_to_adjacency_matrix(edge_index):
+    num_nodes = np.max(edge_index) + 1
+    adj_matrix = np.zeros((num_nodes, num_nodes))
+    for i in range(edge_index.shape[0]):
+        node1, node2 = edge_index[i,0], edge_index[i, 1]
+        adj_matrix[node1, node2] = 1
+        adj_matrix[node2, node1] = 1 
+    return adj_matrix
 
 def adjacency_list_to_matrix(adjacency_list: List[set]) -> np.ndarray:
     """
@@ -346,7 +420,7 @@ def mesh_to_graph(mesh: o3d.geometry.TriangleMesh) -> Tuple[np.ndarray, np.ndarr
     adjacency_list = mesh.compute_adjacency_list().adjacency_list
     adjacency_matrix = adjacency_list_to_matrix(adjacency_list)
     feature_matrix = np.asarray(mesh.vertices) / 1000
-    return adjacency_matrix, feature_matrix
+    return adjacency_list, adjacency_matrix, feature_matrix
 
 
 def prepare_mesh(
