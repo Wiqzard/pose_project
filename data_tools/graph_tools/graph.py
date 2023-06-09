@@ -425,8 +425,8 @@ def mesh_to_graph(mesh: o3d.geometry.TriangleMesh) -> Tuple[np.ndarray, np.ndarr
 
 def prepare_mesh(
     mesh: TriangleMesh,
-    #simplify_factor: float,
-    num_vertices: int,
+    simplify_factor: float,
+    #num_vertices: int,
     pose: np.ndarray,
     intrinsic_matrix: np.ndarray,
     img_width: int,
@@ -449,11 +449,12 @@ def prepare_mesh(
     Returns:
         TriangleMesh: The processed mesh with simplified geometry, transformed pose, and invisible vertices removed.
     """
-    #mesh = mesh.simplify_vertex_clustering(simplify_factor)
-    pcd = mesh.sample_points_uniformly(number_of_points=num_vertices)
-    print(np.asarray(pcd.points).shape)
-    mesh1= o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd)[0]
-    print(np.asarray(mesh1.vertices).shape)
+    if simplify_factor > 0:
+        mesh = mesh.simplify_vertex_clustering(simplify_factor)
+    #pcd = mesh.sample_points_uniformly(number_of_points=num_vertices)
+    #print(np.asarray(pcd.points).shape)
+    #mesh1= o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd)[0]
+    #print(np.asarray(mesh1.vertices).shape)
     transformation_matrix = np.identity(4)
     transformation_matrix[:3, :] = pose
     mesh = mesh.transform(transformation_matrix)

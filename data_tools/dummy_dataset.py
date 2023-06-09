@@ -9,8 +9,9 @@ from torch.utils.data import Dataset
 import open3d as o3d
 
 from data_tools.bop_dataset import BOPDataset, Flag, DatasetType
-from data_tools.graph_tools.graph import Graph
+from data_tools.graph_tools.graph import Graph, prepare_mesh
 from utils.bbox import Bbox
+
 
 
 class InitialModel(Enum):
@@ -19,10 +20,14 @@ class InitialModel(Enum):
 
 
 class DummyDataset(Dataset):
+    ARROW = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=10, cone_radius=20, cylinder_height=70, cone_height=50, resolution=10, cylinder_split=4, cone_split=1)
+
     def __init__(self, bop_dataset: BOPDataset, cfg=None) -> None:
         super().__init__()
         self.dataset = bop_dataset
-        self.length = 1.0
+        self.length = 0.1
+        self.im_height, self.im_width  = 480, 640
+        
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -30,7 +35,7 @@ class DummyDataset(Dataset):
     def _generate_initial_graph(self, idx: int) -> Graph:
         bbox_objs = self.dataset.get_bbox_objs(idx)
         # could be cx cy h w, byt also x y h w (left top)
-        centers = np.array([np.asarray(bbox[:2]) for bbox in bbox_objs])
+        centers = np.array([np.asarray([bbox[0]/self.im_width,bbox[1]/self.im_height]) for bbox in bbox_objs])
         initial_feat, initial_adj = self.get_inital_model(
             self.length, InitialModel.TETRAHEDRON
         )
@@ -53,6 +58,27 @@ class DummyDataset(Dataset):
         graph.set_edge_index()
         return graph
 
+    def _generate_graph_for_img(self, idx: int) -> Graph:
+        poses = self.dataset.get_poses(idx)
+        cam = self.dataset.get_cam(idx)
+        num_objs = len(poses)
+        total_num_nodes = num_objs * 64
+        feature_matrix = np.zeros((total_num_nodes, 3))
+        adjacency_matrix = np.zeros((total_num_nodes, total_num_nodes)) 
+
+        for i in range(num_objs):
+            mesh = prepare_mesh(mesh=self.ARROW, simplify_factor=0, pose=poses[i], intrinsic_matrix=cam,
+                                img_width=self.im_width, img_height=self.im_height)
+            graph = Graph.from_mesh(mesh)
+            adjacency_matrix[i * 64 : (i + 1) * 64, i * 64 : (i + 1) * 64] = graph.adjacency_matrix 
+            features = graph.feature_matrix - np.mean(graph.feature_matrix, axis=0)
+            feature_matrix[i * 64 : (i + 1) * 64, :] = features
+        graph = Graph(
+            adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix
+        )
+        graph.set_edge_index()
+        return graph
+         
     def get_inital_model(
         self, length: float, model_type: InitialModel
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -76,8 +102,6 @@ class DummyDataset(Dataset):
             tetrahedron -= np.mean(tetrahedron, axis=0)
             return tetrahedron, tetra_adjacency_matrix
 
-    def _generate_graph_for_img(self, idx: int) -> Graph:
-        pass
 
 
 def edge_based_unpooling(edge_index, feature_matrix):

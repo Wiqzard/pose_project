@@ -8,6 +8,17 @@ from data_tools.dummy_dataset import DummyDataset
 from data_tools.bop_dataset import BOPDataset, Flag
 from data_tools.dataset import LMDataset
 
+#sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=5)
+#sphere.compute_vertex_normals()
+#arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=10, cone_radius=15, cylinder_height=80, cone_height=60, resolution=10, cylinder_split=4, cone_split=1)
+#arrow.compute_vertex_normals()
+#arrow_graph = Graph.from_mesh(arrow)
+#arrow_graph.visualize()
+###visulize arrow
+##o3d.visualization.draw_geometries([arrow])
+#sphere = prepare_mesh(sphere)
+#sphere_graph = Graph.from_mesh(sphere)
+
 dataset = BOPDataset(
     "/Users/sebastian/Documents/Projects/pose_project/data/datasets/lm",
     Flag.TRAIN,
@@ -15,6 +26,8 @@ dataset = BOPDataset(
     single_object=False,
 )
 dummy_dataset = DummyDataset(bop_dataset=dataset)
+final_graph = dummy_dataset._generate_graph_for_img(0)
+final_graph.visualize()
 inital_graph = dummy_dataset._generate_initial_graph(0)
 inital_graph.visualize()
 #centers = [
