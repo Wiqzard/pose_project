@@ -1,6 +1,7 @@
 
 import numpy as np
 import open3d as o3d
+import torch
 
 from data_tools.graph_tools.graph import Graph, prepare_mesh
 from data_tools.dummy_dataset import DummyDataset
@@ -8,9 +9,11 @@ from data_tools.dummy_dataset import DummyDataset
 from data_tools.bop_dataset import BOPDataset, Flag
 from data_tools.dataset import LMDataset
 
+from gat_inf import GraphNet, AttentionMode, GraphUnpoolingMesh
 #sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=5)
+
 #sphere.compute_vertex_normals()
-#arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=10, cone_radius=15, cylinder_height=80, cone_height=60, resolution=10, cylinder_split=4, cone_split=1)
+#arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=20, cone_radius=25, cylinder_height=100, cone_height=40, resolution=10, cylinder_split=4, cone_split=1)
 #arrow.compute_vertex_normals()
 #arrow_graph = Graph.from_mesh(arrow)
 #arrow_graph.visualize()
@@ -26,6 +29,38 @@ dataset = BOPDataset(
     single_object=False,
 )
 dummy_dataset = DummyDataset(bop_dataset=dataset)
+input_ = dummy_dataset._generate_initial_graph(0)
+
+
+graph_net = GraphNet(
+    in_channels=3, 
+    out_channels=3, 
+    channels=16,
+    n_res_blocks=2,
+    attention_levels=[1, 2],
+    attention_mode=AttentionMode.GAT,
+    channel_multipliers=[1, 1, 2, 2],
+    unpooling_levels=[0, 1, 2], # only in downsampling, avoid unpooling in last level
+    n_heads=4,
+    d_cond=1024,
+)
+unpooling = GraphUnpoolingMesh()
+print("graph_net params: ", sum(p.numel() for p in graph_net.parameters()))
+random_graph = Graph.create_random_graph(10, 3)
+random_graph.set_edge_index()
+cond = torch.randn(1,49,1024)
+#out2 = unpooling(torch.from_numpy(random_graph.feature_matrix), torch.from_numpy(random_graph.edge_index).T)
+#edges = out2[1]
+#max_index = torch.max(edges)
+#assert out2[0].shape[0] == max_index + 1
+#out = graph_net(torch.from_numpy(random_graph.feature_matrix), torch.from_numpy(random_graph.edge_index).T, cond=cond)
+
+
+x = torch.from_numpy(input_.feature_matrix).float()
+edge_index = torch.from_numpy(input_.edge_index).long().T
+out = graph_net(x, edge_index, cond=cond)
+
+
 final_graph = dummy_dataset._generate_graph_for_img(0)
 final_graph.visualize()
 inital_graph = dummy_dataset._generate_initial_graph(0)

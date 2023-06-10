@@ -20,7 +20,7 @@ class InitialModel(Enum):
 
 
 class DummyDataset(Dataset):
-    ARROW = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=10, cone_radius=20, cylinder_height=70, cone_height=50, resolution=10, cylinder_split=4, cone_split=1)
+    ARROW = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=40, cone_radius=50, cylinder_height=200, cone_height=100, resolution=10, cylinder_split=4, cone_split=1)
 
     def __init__(self, bop_dataset: BOPDataset, cfg=None) -> None:
         super().__init__()
@@ -71,7 +71,7 @@ class DummyDataset(Dataset):
                                 img_width=self.im_width, img_height=self.im_height)
             graph = Graph.from_mesh(mesh)
             adjacency_matrix[i * 64 : (i + 1) * 64, i * 64 : (i + 1) * 64] = graph.adjacency_matrix 
-            features = graph.feature_matrix - np.mean(graph.feature_matrix, axis=0)
+            features = graph.feature_matrix #- np.mean(graph.feature_matrix, axis=0)
             feature_matrix[i * 64 : (i + 1) * 64, :] = features
         graph = Graph(
             adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix

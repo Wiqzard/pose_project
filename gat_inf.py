@@ -44,6 +44,9 @@ class TimestepEmbedSequential(nn.Sequential):
     This sequential module can compose of different modules suck as `ResBlock`,
     `nn.Conv` and `SpatialTransformer` and calls them with the matching signatures
     """
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.layer_names = [layer[1].__class__.__name__ for layer in self._modules.items()]
 
     def forward(self, x, edge_index, t_emb, cond=None):
         for layer in self:
@@ -54,7 +57,66 @@ class TimestepEmbedSequential(nn.Sequential):
             else:
                 x = layer(x=x, edge_index=edge_index)
         return x
-    
+
+
+class GraphUnpoolingConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 2, stride: int = 2):
+        super().__init__()
+        self.conv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride)
+
+    def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
+        x = x.unsqueeze(0)
+        x = x.permute(0, 2, 1)
+        x = self.conv(x)
+        x = x.squeeze(0)
+        x = x.permute(1, 0)
+        return x    
+
+class GraphUnpoolingMesh(nn.Module):
+    """
+    ### Graph Unpooling Mesh
+    Find a method to implement another unpooling method for remaining
+    features. 
+    """
+    def __init__(self)-> None :
+        super().__init__()
+
+    def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
+        #new_features_coords = torch.mean(x[edge_index][:, :, :3], dim=1)
+        #remaining_features = torch.mean(x[edge_index][:, :, 3:], dim=1)
+        #new_features = torch.cat([new_features_coords, remaining_features], dim=-1)
+        edge_index, new_features = edge_based_unpooling(edge_index, x)
+
+        return new_features, edge_index
+
+def edge_based_unpooling(edge_index, feature_matrix):
+    edge_index = edge_index.T
+    num_nodes = feature_matrix.shape[0]
+    num_edges = edge_index.shape[0]
+
+    # Calculate new node coordinates
+    new_node_coords = torch.mean(feature_matrix[edge_index], dim=1)
+
+    # Append new node coordinates to feature matrix
+    new_feature_matrix = torch.cat([feature_matrix, new_node_coords], dim=0)
+
+    # Create new edge index with new edges connecting old nodes with new nodes
+    #new_node_indices = torch.arange(num_nodes, num_nodes + num_edges).unsqueeze(-1)
+    new_node_indices = torch.arange(num_nodes, new_feature_matrix.shape[0]).unsqueeze(-1)
+    new_edges_1 = torch.cat([edge_index[:, 0].unsqueeze(-1), new_node_indices], dim=1)
+    new_edges_2 = torch.cat([new_node_indices, edge_index[:, 1].unsqueeze(-1)], dim=1)
+
+    # Initialize new edge index with old edges and new edges
+    new_edge_index = torch.cat([edge_index, new_edges_1, new_edges_2], dim=0)
+
+    # Connect the three new vertices for each old triangle
+    #for i in range(num_nodes, num_nodes + num_edges, 3):
+    for i in range(num_nodes, new_feature_matrix.shape[0]-2, 3):
+        triangle_edges = torch.tensor([[i, i + 1], [i + 1, i + 2], [i + 2, i]])
+        new_edge_index = torch.cat([new_edge_index, triangle_edges], dim=0)
+
+    return new_edge_index.T, new_feature_matrix
+
 class GraphNet(nn.Module):
     def __init__(
         self,
@@ -65,6 +127,7 @@ class GraphNet(nn.Module):
         attention_levels: List[int],
         attention_mode: AttentionMode,
         channel_multipliers: List[int],
+        unpooling_levels: List[int],
         n_heads: int,
         d_cond: int = 1024,
     ) -> None:
@@ -95,6 +158,8 @@ class GraphNet(nn.Module):
         else:
             raise ValueError(f"Unknown attention mode: {attention_mode}")
 
+        self.unpooling_layer = GraphUnpoolingMesh()
+
         self.input_blocks = nn.ModuleList([])
         self.input_blocks.append(
             TimestepEmbedSequential(GCNConv(in_channels, channels))
@@ -102,7 +167,18 @@ class GraphNet(nn.Module):
         input_block_channels = [channels]
         channels_list = [channels * m for m in channel_multipliers]
 
-        for i, _ in itertools.product(range(levels), range(n_res_blocks + 1)):
+#        for i, _ in itertools.product(range(levels), range(n_res_blocks + 1)):
+#            layers = [
+#                GraphResNetBlock(channels, d_time_emb, out_channels=channels_list[i])
+#            ]
+#            channels = channels_list[i]
+#
+#            if i in attention_levels:
+#                layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
+#
+#            self.input_blocks.append(TimestepEmbedSequential(*layers))
+#            input_block_channels.append(channels)
+        for i in range(levels):
             layers = [
                 GraphResNetBlock(channels, d_time_emb, out_channels=channels_list[i])
             ]
@@ -110,6 +186,9 @@ class GraphNet(nn.Module):
 
             if i in attention_levels:
                 layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
+            if n_res_blocks > 0:
+                for _ in range(n_res_blocks):
+                    layers.append(GraphResNetBlock(channels, d_time_emb, out_channels=channels_list[i]))
 
             self.input_blocks.append(TimestepEmbedSequential(*layers))
             input_block_channels.append(channels)
@@ -121,7 +200,23 @@ class GraphNet(nn.Module):
         )
 
         self.output_blocks = nn.ModuleList([])
-        for i, _ in itertools.product(reversed(range(levels)), range(n_res_blocks + 1)):
+#        for i, _ in itertools.product(reversed(range(levels)), range(n_res_blocks + 1)):
+#            layers = [
+#                GraphResNetBlock(
+#                    channels, #+ input_block_channels.pop(),
+#                    d_time_emb,
+#                    out_channels=channels_list[i],
+#                )
+#            ]
+#            channels = channels_list[i]
+#            if i in attention_levels:
+#                layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
+#
+#            if i in unpooling_levels:
+#                layers.append(self.unpooling_layer)
+#
+#            self.output_blocks.append(TimestepEmbedSequential(*layers))
+        for i in reversed(range(levels)):
             layers = [
                 GraphResNetBlock(
                     channels, #+ input_block_channels.pop(),
@@ -130,8 +225,16 @@ class GraphNet(nn.Module):
                 )
             ]
             channels = channels_list[i]
+            if n_res_blocks > 0:
+                for _ in range(n_res_blocks-1):
+                    layers.append(GraphResNetBlock(channels, d_time_emb))
             if i in attention_levels:
                 layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
+
+            if i in unpooling_levels:
+                layers.append(self.unpooling_layer)
+            
+
             self.output_blocks.append(TimestepEmbedSequential(*layers))
 
         self.out_norm =nn.GroupNorm(16, channels)
@@ -141,16 +244,18 @@ class GraphNet(nn.Module):
     def forward(self, x, edge_index, t_emb=None, cond=None):
 
         for module in self.input_blocks:
+            
             x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
             #x_input_block.append(x)
             print(x.shape)
         x = self.middle_block(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
 
         for module in self.output_blocks:
-            #x = torch.cat([x, x_input_block.pop()], dim=-1)
             x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
+            if isinstance(x, tuple):
+                x, edge_index = x
             print(x.shape)
-        return self.out(x, edge_index)    
+        return self.out(x, edge_index), edge_index    
             
 class Gatv2CrossAttention(MessagePassing):
     _alpha: OptTensor
