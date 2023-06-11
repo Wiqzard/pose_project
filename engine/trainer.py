@@ -8,34 +8,16 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
-#from torch.cuda.amp import GradScaler, autocast
 from torch.cuda import amp
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-#from ultralytics.nn.tasks import attempt_load_one_weight, attempt_load_weights
-#from ultralytics.yolo.cfg import get_cfg
-#from ultralytics.yolo.data.utils import check_cls_dataset, check_det_dataset
-#from ultralytics.yolo.utils import (
-    #DEFAULT_CFG,
-    #LOGGER,
-    #ONLINE,
-    #RANK,
-    #ROOT,
-    #SETTINGS,
-    #TQDM_BAR_FORMAT,
-    #__version__,
-    #callbacks,
-    #clean_url,
-    #colorstr,
-    #emojis,
-    #yaml_save,
-#)
+
 from utils import RANK,ROOT, LOGGER,TQDM_BAR_FORMAT, DEFAULT_CFG, yaml_save, colorstr, callbacks
 from utils.cfg_utils import get_cfg, print_args
-from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStopping, generate_ddp_command, ddp_cleanup, one_cycle, strip_optimizer
+from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStopping, generate_ddp_command, ddp_cleanup, one_cycle, strip_optimizer, attempt_load_one_weight
 from utils.checks import check_imgsz, check_file
 
 
@@ -90,7 +72,7 @@ class BaseTrainer:
 
         # Model and Dataset
         self.model = self.args.model
-        #self.trainset, self.testset = self.get_dataset(data=None)#self.data)
+        self.trainset, self.testset = self.get_dataset(data=None)#self.data)
         self.ema = None
 
         # Optimization utils init
@@ -511,9 +493,6 @@ class BaseTrainer:
         """
         raise NotImplementedError("get_dataloader function not implemented in trainer")
 
-    def build_dataset(self, img_path, mode="train", batch=None):
-        """Build dataset"""
-        raise NotImplementedError("build_dataset function not implemented in trainer")
 
     def criterion(self, preds, batch):
         """
@@ -591,7 +570,9 @@ class BaseTrainer:
                 last = Path(check_file(resume))
 
                 # Check that resume data YAML exists, otherwise strip to force re-download of dataset
-                ckpt_args = attempt_load_weights(last).args
+                model, ckpt = attempt_load_one_weight(last)#.args
+                ckpt_args = model.args
+
                 if not Path(ckpt_args["data"]).exists():
                     ckpt_args["data"] = self.args.data
 

@@ -2,6 +2,7 @@ import contextlib
 import inspect
 import logging.config
 import os
+import time
 import platform
 import re
 import subprocess
@@ -39,6 +40,8 @@ VERBOSE = True  # global verbose mode
 TQDM_BAR_FORMAT = "{l_bar}{bar:10}{r_bar}"  # tqdm bar format
 LOGGING_NAME = "pose_project"
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ["Darwin", "Linux", "Windows"])
+PIN_MEMORY = str(os.getenv('PIN_MEMORY', True)).lower() == 'true'  # global pin_memory for dataloaders
+
 
 
 # Settings
@@ -204,3 +207,89 @@ for k, v in DEFAULT_CFG_DICT.items():
         DEFAULT_CFG_DICT[k] = None
 DEFAULT_CFG_KEYS = DEFAULT_CFG_DICT.keys()
 DEFAULT_CFG = IterableSimpleNamespace(**DEFAULT_CFG_DICT)
+
+
+def is_dir_writeable(dir_path: Union[str, Path]) -> bool:
+    """
+    Check if a directory is writeable.
+
+    Args:
+        dir_path (str) or (Path): The path to the directory.
+
+    Returns:
+        bool: True if the directory is writeable, False otherwise.
+    """
+    return os.access(str(dir_path), os.W_OK)
+
+
+def get_user_config_dir(sub_dir='Ultralytics'):
+    """
+    Get the user config directory.
+
+    Args:
+        sub_dir (str): The name of the subdirectory to create.
+
+    Returns:
+        Path: The path to the user config directory.
+    """
+    # Return the appropriate config directory for each operating system
+    if WINDOWS:
+        path = Path.home() / 'AppData' / 'Roaming' / sub_dir
+    elif MACOS:  # macOS
+        path = Path.home() / 'Library' / 'Application Support' / sub_dir
+    elif LINUX:
+        path = Path.home() / '.config' / sub_dir
+    else:
+        raise ValueError(f'Unsupported operating system: {platform.system()}')
+
+    # GCP and AWS lambda fix, only /tmp is writeable
+    if not is_dir_writeable(str(path.parent)):
+        path = Path('/tmp') / sub_dir
+
+    # Create the subdirectory if it does not exist
+    path.mkdir(parents=True, exist_ok=True)
+
+    return path
+
+
+USER_CONFIG_DIR = Path(os.getenv('MESH_CONFIG_DIR', get_user_config_dir())) 
+SETTINGS_YAML = USER_CONFIG_DIR / 'settings.yaml'
+
+
+class Profile(contextlib.ContextDecorator):
+    """
+    YOLOv8 Profile class.
+    Usage: as a decorator with @Profile() or as a context manager with 'with Profile():'
+    """
+
+    def __init__(self, t=0.0):
+        """
+        Initialize the Profile class.
+
+        Args:
+            t (float): Initial time. Defaults to 0.0.
+        """
+        self.t = t
+        self.cuda = torch.cuda.is_available()
+
+    def __enter__(self):
+        """
+        Start timing.
+        """
+        self.start = self.time()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        """
+        Stop timing.
+        """
+        self.dt = self.time() - self.start  # delta-time
+        self.t += self.dt  # accumulate dt
+
+    def time(self):
+        """
+        Get current time.
+        """
+        if self.cuda:
+            torch.cuda.synchronize()
+        return time.time()

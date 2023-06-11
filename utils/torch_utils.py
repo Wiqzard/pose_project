@@ -2,7 +2,6 @@ import math
 import os
 import platform
 import random
-import time
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -13,22 +12,24 @@ import socket
 import sys
 import tempfile
 
+
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import dataloader, distributed
 import torchvision
 
 
 from . import USER_CONFIG_DIR
-from .torch_utils import TORCH_1_9
 
 try:
     import thop
 except ImportError:
     thop = None
-from utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER,  RANK, VERSION 
+from utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER,  RANK, VERSION , PIN_MEMORY, emojis
+from utils.checks import check_suffix
 
 
 
@@ -134,7 +135,7 @@ def generate_ddp_command(world_size, trainer):
     safe_pattern = re.compile(r'^[a-zA-Z0-9_. /\\-]{1,128}$')  # allowed characters and maximum of 100 characters
     if not (safe_pattern.match(file) and Path(file).exists() and file.endswith('.py')):  # using CLI
         file = generate_ddp_file(trainer)
-    dist_cmd = 'torch.distributed.run' if TORCH_1_9 else 'torch.distributed.launch'
+    dist_cmd = 'torch.distributed.launch'
     port = find_free_network_port()
     cmd = [sys.executable, '-m', dist_cmd, '--nproc_per_node', f'{world_size}', '--master_port', f'{port}', file]
     return cmd, file
@@ -320,3 +321,138 @@ class EarlyStopping:
                         f'To update EarlyStopping(patience={self.patience}) pass a new patience value, '
                         f'i.e. `patience=300` or use `patience=0` to disable EarlyStopping.')
         return stop
+
+        
+        
+#def torch_safe_load(weight):
+#    """
+#    This function attempts to load a PyTorch model with the torch.load() function. If a ModuleNotFoundError is raised,
+#    it catches the error, logs a warning message, and attempts to install the missing module via the
+#    check_requirements() function. After installation, the function again attempts to load the model using torch.load().
+#
+#    Args:
+#        weight (str): The file path of the PyTorch model.
+#
+#    Returns:
+#        (dict): The loaded PyTorch model.
+#    """
+#
+#    check_suffix(file=weight, suffix='.pt')
+#    file = weight  # search online if missing locally
+#    try:
+#        return torch.load(file, map_location='cpu'), file  # load
+#    except ModuleNotFoundError as e:  # e.name is missing module name
+#        if e.name == 'models':
+#            raise TypeError(
+#                emojis(f'ERROR ❌️ {weight} appears to be an Ultralytics YOLOv5 model originally trained '
+#                       f"\nRecommend fixes are to train a new model using the latest 'ultralytics' package or to "
+#                       f"run a command with an official YOLOv8 model, i.e. 'yolo predict model=yolov8n.pt'")) from e
+#        LOGGER.warning(f"WARNING ⚠️ {weight} appears to require '{e.name}', which is not in ultralytics requirements."
+#                       f"\nAutoInstall will run now for '{e.name}' but this feature will be removed in the future."
+#                       f"\nRecommend fixes are to train a new model using the latest 'ultralytics' package or to "
+#                       f"run a command with an official YOLOv8 model, i.e. 'yolo predict model=yolov8n.pt'")
+#        check_requirements(e.name)  # install missing module
+#
+#        return torch.load(file, map_location='cpu'), file  # load
+#
+
+ 
+def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
+    """Loads a single model weights."""
+    ckpt, weight = torch.load(weight, map_location=device), weight  # load
+    args = {**DEFAULT_CFG_DICT, **(ckpt.get('train_args', {}))}  # combine model and default args, preferring model args
+    model = (ckpt.get('ema') or ckpt['model']).to(device).float()  # FP32 model
+
+    # Model compatibility updates
+    model.args = {k: v for k, v in args.items() if k in DEFAULT_CFG_KEYS}  # attach args to model
+    model.pt_path = weight  # attach *.pt file path to model
+    if not hasattr(model, 'stride'):
+        model.stride = torch.tensor([16.])
+
+    model = model.fuse().eval() if fuse and hasattr(model, 'fuse') else model.eval()  # model in eval mode
+
+    # Module compatibility updates
+    for m in model.modules():
+        t = type(m)
+        if t is nn.Upsample and not hasattr(m, 'recompute_scale_factor'):
+            m.recompute_scale_factor = None  # torch 1.11.0 compatibility
+
+    # Return model and ckpt
+    return model, ckpt
+
+@contextmanager
+def torch_distributed_zero_first(local_rank: int):
+    """Decorator to make all processes in distributed training wait for each local_master to do something."""
+    initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
+    if initialized and local_rank not in (-1, 0):
+        dist.barrier(device_ids=[local_rank])
+    yield
+    if initialized and local_rank == 0:
+        dist.barrier(device_ids=[0])
+
+        
+class InfiniteDataLoader(dataloader.DataLoader):
+    """Dataloader that reuses workers. Uses same syntax as vanilla DataLoader."""
+
+    def __init__(self, *args, **kwargs):
+        """Dataloader that infinitely recycles workers, inherits from DataLoader."""
+        super().__init__(*args, **kwargs)
+        object.__setattr__(self, 'batch_sampler', _RepeatSampler(self.batch_sampler))
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        """Returns the length of the batch sampler's sampler."""
+        return len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        """Creates a sampler that repeats indefinitely."""
+        for _ in range(len(self)):
+            yield next(self.iterator)
+
+    def reset(self):
+        """Reset iterator.
+        This is useful when we want to modify settings of dataset while training.
+        """
+        self.iterator = self._get_iterator()
+
+        
+class _RepeatSampler:
+    """
+    Sampler that repeats forever.
+
+    Args:
+        sampler (Dataset.sampler): The sampler to repeat.
+    """
+
+    def __init__(self, sampler):
+        """Initializes an object that repeats a given sampler indefinitely."""
+        self.sampler = sampler
+
+    def __iter__(self):
+        """Iterates over the 'sampler' and yields its contents."""
+        while True:
+            yield from iter(self.sampler)
+
+def seed_worker(worker_id):  # noqa
+    # Set dataloader worker seed https://pytorch.org/docs/stable/notes/randomness.html#dataloader
+    worker_seed = torch.initial_seed() % 2 ** 32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
+    """Return an InfiniteDataLoader or DataLoader for training or validation set."""
+    batch = min(batch, len(dataset))
+    nd = torch.cuda.device_count()  # number of CUDA devices
+    nw = min([os.cpu_count() // max(nd, 1), batch if batch > 1 else 0, workers])  # number of workers
+    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    generator = torch.Generator()
+    generator.manual_seed(6148914691236517205 + RANK)
+    return InfiniteDataLoader(dataset=dataset,
+                              batch_size=batch,
+                              shuffle=shuffle and sampler is None,
+                              num_workers=nw,
+                              sampler=sampler,
+                              pin_memory=PIN_MEMORY,
+                              collate_fn=getattr(dataset, 'collate_fn', None),
+                              worker_init_fn=seed_worker,
+                              generator=generator)

@@ -4,6 +4,7 @@ project: null
 name: default
 model: null
 data_path: null
+resume: false
 epochs: 100
 patience: 50
 batch: 16
