@@ -1,8 +1,25 @@
-import os
+import contextlib
+import inspect
 import logging.config
-from pathlib import Path
+import os
 import platform
+import re
+import subprocess
+import sys
+import threading
+import urllib
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Union
 
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import yaml
+
+VERSION = '1.0'  # software version
 
 # PyTorch Multi-GPU DDP Constants
 RANK = int(os.getenv("RANK", -1))
@@ -14,7 +31,7 @@ WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 # Other Constants
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]
-# DEFAULT_CFG_PATH = ROOT / 'yolo/cfg/default.yaml'
+DEFAULT_CFG_PATH = ROOT / 'configs/default.yaml'
 NUM_THREADS = min(
     8, max(1, os.cpu_count() - 1)
 )  # number of YOLOv5 multiprocessing threads
@@ -22,6 +39,16 @@ VERBOSE = True  # global verbose mode
 TQDM_BAR_FORMAT = "{l_bar}{bar:10}{r_bar}"  # tqdm bar format
 LOGGING_NAME = "pose_project"
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ["Darwin", "Linux", "Windows"])
+
+
+# Settings
+torch.set_printoptions(linewidth=320, precision=4, profile='default')
+np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format})  # format short g, %precision=5
+cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with PyTorch DataLoader)
+os.environ['NUMEXPR_MAX_THREADS'] = str(NUM_THREADS)  # NumExpr max threads
+os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'  # for deterministic training
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # suppress verbose TF compiler warnings in Colab
+
 
 
 def set_logging(name=LOGGING_NAME, verbose=True):
@@ -47,3 +74,133 @@ def set_logging(name=LOGGING_NAME, verbose=True):
 
 set_logging(LOGGING_NAME, verbose=VERBOSE)  # run before defining LOGGER
 LOGGER = logging.getLogger(LOGGING_NAME)
+
+def emojis(string=''):
+    """Return platform-dependent emoji-safe version of string."""
+    return string.encode().decode('ascii', 'ignore') if WINDOWS else string
+
+def colorstr(*input):
+    """Colors a string https://en.wikipedia.org/wiki/ANSI_escape_code, i.e.  colorstr('blue', 'hello world')."""
+    *args, string = input if len(input) > 1 else ('blue', 'bold', input[0])  # color arguments, string
+    colors = {
+        'black': '\033[30m',  # basic colors
+        'red': '\033[31m',
+        'green': '\033[32m',
+        'yellow': '\033[33m',
+        'blue': '\033[34m',
+        'magenta': '\033[35m',
+        'cyan': '\033[36m',
+        'white': '\033[37m',
+        'bright_black': '\033[90m',  # bright colors
+        'bright_red': '\033[91m',
+        'bright_green': '\033[92m',
+        'bright_yellow': '\033[93m',
+        'bright_blue': '\033[94m',
+        'bright_magenta': '\033[95m',
+        'bright_cyan': '\033[96m',
+        'bright_white': '\033[97m',
+        'end': '\033[0m',  # misc
+        'bold': '\033[1m',
+        'underline': '\033[4m'}
+    return ''.join(colors[x] for x in args) + f'{string}' + colors['end']
+
+class IterableSimpleNamespace(SimpleNamespace):
+    """
+    Ultralytics IterableSimpleNamespace is an extension class of SimpleNamespace that adds iterable functionality and
+    enables usage with dict() and for loops.
+    """
+
+    def __iter__(self):
+        """Return an iterator of key-value pairs from the namespace's attributes."""
+        return iter(vars(self).items())
+
+    def __str__(self):
+        """Return a human-readable string representation of the object."""
+        return '\n'.join(f'{k}={v}' for k, v in vars(self).items())
+
+    def __getattr__(self, attr):
+        """Custom attribute access error message with helpful information."""
+        name = self.__class__.__name__
+        raise AttributeError(f"""
+            '{name}' object has no attribute '{attr}'. This may be caused by a modified or out of date 
+            'default.yaml' file.\nPlease update your code with 'pip install -U ultralytics' and if necessary replace
+            {DEFAULT_CFG_PATH}
+            """)
+
+    def get(self, key, default=None):
+        """Return the value of the specified key if it exists; otherwise, return the default value."""
+        return getattr(self, key, default)
+
+
+
+def yaml_save(file='data.yaml', data=None):
+    """
+    Save YAML data to a file.
+
+    Args:
+        file (str, optional): File name. Default is 'data.yaml'.
+        data (dict): Data to save in YAML format.
+
+    Returns:
+        None: Data is saved to the specified file.
+    """
+    if data is None:
+        data = {}
+    file = Path(file)
+    if not file.parent.exists():
+        # Create parent directories if they don't exist
+        file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Convert Path objects to strings
+    for k, v in data.items():
+        if isinstance(v, Path):
+            data[k] = str(v)
+
+    # Dump data to file in YAML format
+    with open(file, 'w') as f:
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+        
+def yaml_load(file='data.yaml', append_filename=False):
+    """
+    Load YAML data from a file.
+
+    Args:
+        file (str, optional): File name. Default is 'data.yaml'.
+        append_filename (bool): Add the YAML filename to the YAML dictionary. Default is False.
+
+    Returns:
+        dict: YAML data and file name.
+    """
+    with open(file, errors='ignore', encoding='utf-8') as f:
+        s = f.read()  # string
+
+        # Remove special characters
+        if not s.isprintable():
+            s = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD\U00010000-\U0010ffff]+', '', s)
+
+        # Add YAML filename to dict and return
+        return {**yaml.safe_load(s), 'yaml_file': str(file)} if append_filename else yaml.safe_load(s)
+
+
+def yaml_print(yaml_file: Union[str, Path, dict]) -> None:
+    """
+    Pretty prints a yaml file or a yaml-formatted dictionary.
+
+    Args:
+        yaml_file: The file path of the yaml file or a yaml-formatted dictionary.
+
+    Returns:
+        None
+    """
+    yaml_dict = yaml_load(yaml_file) if isinstance(yaml_file, (str, Path)) else yaml_file
+    dump = yaml.dump(yaml_dict, sort_keys=False, allow_unicode=True)
+    LOGGER.info(f"Printing '{colorstr('bold', 'black', yaml_file)}'\n\n{dump}")
+
+
+# Default configuration
+DEFAULT_CFG_DICT = yaml_load(DEFAULT_CFG_PATH)
+for k, v in DEFAULT_CFG_DICT.items():
+    if isinstance(v, str) and v.lower() == 'none':
+        DEFAULT_CFG_DICT[k] = None
+DEFAULT_CFG_KEYS = DEFAULT_CFG_DICT.keys()
+DEFAULT_CFG = IterableSimpleNamespace(**DEFAULT_CFG_DICT)

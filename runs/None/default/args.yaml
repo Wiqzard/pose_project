@@ -1,0 +1,13 @@
+mode: train
+save_dir: /Users/sebastian/Documents/Projects/pose_project/runs/None/default
+project: null
+name: default
+model: null
+data_path: null
+epochs: 100
+patience: 50
+batch: 16
+imgsz: 640
+device: null
+save: true
+save_period: -1

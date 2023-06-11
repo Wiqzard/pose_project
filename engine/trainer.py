@@ -8,82 +8,39 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.nn as nn
+#from torch.cuda.amp import GradScaler, autocast
 from torch.cuda import amp
+import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import lr_scheduler
 from tqdm import tqdm
 
-from ultralytics.nn.tasks import attempt_load_one_weight, attempt_load_weights
-from ultralytics.yolo.cfg import get_cfg
-from ultralytics.yolo.data.utils import check_cls_dataset, check_det_dataset
-from ultralytics.yolo.utils import (
-    DEFAULT_CFG,
-    LOGGER,
-    ONLINE,
-    RANK,
-    ROOT,
-    SETTINGS,
-    TQDM_BAR_FORMAT,
-    __version__,
-    callbacks,
-    clean_url,
-    colorstr,
-    emojis,
-    yaml_save,
-)
-from ultralytics.yolo.utils.autobatch import check_train_batch_size
-from ultralytics.yolo.utils.checks import check_file, check_imgsz, print_args
-from ultralytics.yolo.utils.dist import ddp_cleanup, generate_ddp_command
-from ultralytics.yolo.utils.files import get_latest_run, increment_path
-from ultralytics.yolo.utils.torch_utils import (
-    EarlyStopping,
-    ModelEMA,
-    de_parallel,
-    init_seeds,
-    one_cycle,
-    select_device,
-    strip_optimizer,
-)
+#from ultralytics.nn.tasks import attempt_load_one_weight, attempt_load_weights
+#from ultralytics.yolo.cfg import get_cfg
+#from ultralytics.yolo.data.utils import check_cls_dataset, check_det_dataset
+#from ultralytics.yolo.utils import (
+    #DEFAULT_CFG,
+    #LOGGER,
+    #ONLINE,
+    #RANK,
+    #ROOT,
+    #SETTINGS,
+    #TQDM_BAR_FORMAT,
+    #__version__,
+    #callbacks,
+    #clean_url,
+    #colorstr,
+    #emojis,
+    #yaml_save,
+#)
+from utils import RANK,ROOT, LOGGER,TQDM_BAR_FORMAT, DEFAULT_CFG, yaml_save, colorstr, callbacks
+from utils.cfg_utils import get_cfg, print_args
+from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStopping, generate_ddp_command, ddp_cleanup, one_cycle, strip_optimizer
+from utils.checks import check_imgsz, check_file
+
 
 
 class BaseTrainer:
-    """
-    BaseTrainer
-
-    A base class for creating trainers.
-
-    Attributes:
-        args (SimpleNamespace): Configuration for the trainer.
-        check_resume (method): Method to check if training should be resumed from a saved checkpoint.
-        validator (BaseValidator): Validator instance.
-        model (nn.Module): Model instance.
-        callbacks (defaultdict): Dictionary of callbacks.
-        save_dir (Path): Directory to save results.
-        wdir (Path): Directory to save weights.
-        last (Path): Path to last checkpoint.
-        best (Path): Path to best checkpoint.
-        save_period (int): Save checkpoint every x epochs (disabled if < 1).
-        batch_size (int): Batch size for training.
-        epochs (int): Number of epochs to train for.
-        start_epoch (int): Starting epoch for training.
-        device (torch.device): Device to use for training.
-        amp (bool): Flag to enable AMP (Automatic Mixed Precision).
-        scaler (amp.GradScaler): Gradient scaler for AMP.
-        data (str): Path to data.
-        trainset (torch.utils.data.Dataset): Training dataset.
-        testset (torch.utils.data.Dataset): Testing dataset.
-        ema (nn.Module): EMA (Exponential Moving Average) of the model.
-        lf (nn.Module): Loss function.
-        scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
-        best_fitness (float): The best fitness value achieved.
-        fitness (float): Current fitness value.
-        loss (float): Current loss value.
-        tloss (float): Total loss value.
-        loss_names (list): List of loss names.
-        csv (Path): Path to results CSV file.
-    """
-
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
         """
         Initializes the BaseTrainer class.
@@ -98,21 +55,16 @@ class BaseTrainer:
         self.validator = None
         self.model = None
         self.metrics = None
-        self.plots = {}
-        init_seeds(self.args.seed + 1 + RANK, deterministic=self.args.deterministic)
+        
+        
 
         # Dirs
-        project = self.args.project or Path(SETTINGS["runs_dir"]) / self.args.task
-        name = self.args.name or f"{self.args.mode}"
-        if hasattr(self.args, "save_dir"):
-            self.save_dir = Path(self.args.save_dir)
+        project = self.args.project
+        name = self.args.name 
+        if hasattr(self.args, "save_dir") and self.args.save_dir:
+            self.args.save_dir = str(Path(self.args.save_dir) / project / name)
         else:
-            self.save_dir = Path(
-                increment_path(
-                    Path(project) / name,
-                    exist_ok=self.args.exist_ok if RANK in (-1, 0) else True,
-                )
-            )
+            self.save_dir = ROOT / "runs" / str(project) / name  
         self.wdir = self.save_dir / "weights"  # weights dir
         if RANK in (-1, 0):
             self.wdir.mkdir(parents=True, exist_ok=True)  # make dir
@@ -138,24 +90,7 @@ class BaseTrainer:
 
         # Model and Dataset
         self.model = self.args.model
-        try:
-            if self.args.task == "classify":
-                self.data = check_cls_dataset(self.args.data)
-            elif self.args.data.endswith(".yaml") or self.args.task in (
-                "detect",
-                "segment",
-            ):
-                self.data = check_det_dataset(self.args.data)
-                if "yaml_file" in self.data:
-                    self.args.data = self.data[
-                        "yaml_file"
-                    ]  # for validating 'yolo train data=url.zip' usage
-        except Exception as e:
-            raise RuntimeError(
-                emojis(f"Dataset '{clean_url(self.args.data)}' error ❌ {e}")
-            ) from e
-
-        self.trainset, self.testset = self.get_dataset(self.data)
+        #self.trainset, self.testset = self.get_dataset(data=None)#self.data)
         self.ema = None
 
         # Optimization utils init
@@ -169,7 +104,6 @@ class BaseTrainer:
         self.tloss = None
         self.loss_names = ["Loss"]
         self.csv = self.save_dir / "results.csv"
-        self.plot_idx = [0, 1, 2]
 
         # Callbacks
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
@@ -206,12 +140,6 @@ class BaseTrainer:
 
         # Run subprocess if DDP training, else train normally
         if world_size > 1 and "LOCAL_RANK" not in os.environ:
-            # Argument checks
-            if self.args.rect:
-                LOGGER.warning(
-                    "WARNING ⚠️ 'rect=True' is incompatible with Multi-GPU training, setting rect=False"
-                )
-                self.args.rect = False
             # Command
             cmd, file = generate_ddp_command(world_size, self)
             try:
@@ -248,14 +176,14 @@ class BaseTrainer:
         ckpt = self.setup_model()
         self.model = self.model.to(self.device)
         self.set_model_attributes()
-        # Check AMP
-        self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
-        if self.amp and RANK in (-1, 0):  # Single-GPU and DDP
-            callbacks_backup = (
-                callbacks.default_callbacks.copy()
-            )  # backup callbacks as check_amp() resets them
-            self.amp = torch.tensor(check_amp(self.model), device=self.device)
-            callbacks.default_callbacks = callbacks_backup  # restore callbacks
+#        # Check AMP
+#        self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
+#        if self.amp and RANK in (-1, 0):  # Single-GPU and DDP
+#            callbacks_backup = (
+#                callbacks.default_callbacks.copy()
+#            )  # backup callbacks as check_amp() resets them
+#            self.amp = torch.tensor(check_amp(self.model), device=self.device)
+#            callbacks.default_callbacks = callbacks_backup  # restore callbacks
         if RANK > -1:  # DDP
             dist.broadcast(
                 self.amp, src=0
@@ -266,20 +194,9 @@ class BaseTrainer:
             self.model = DDP(self.model, device_ids=[RANK])
         # Check imgsz
         gs = max(
-            int(self.model.stride.max() if hasattr(self.model, "stride") else 32), 32
+            int(self.model.stride.max() if hasattr(self.model, "stride") else 16), 16
         )  # grid size (max stride)
         self.args.imgsz = check_imgsz(self.args.imgsz, stride=gs, floor=gs, max_dim=1)
-        # Batch size
-        if self.batch_size == -1:
-            if RANK == -1:  # single-GPU only, estimate best batch size
-                self.batch_size = check_train_batch_size(
-                    self.model, self.args.imgsz, self.amp
-                )
-            else:
-                SyntaxError(
-                    "batch=-1 to use AutoBatch is only available in Single-GPU training. "
-                    "Please pass a valid batch size value for Multi-GPU DDP training, i.e. batch=16"
-                )
 
         # Optimizer
         self.accumulate = max(
@@ -352,9 +269,6 @@ class BaseTrainer:
             f"Logging results to {colorstr('bold', self.save_dir)}\n"
             f"Starting training for {self.epochs} epochs..."
         )
-        if self.args.close_mosaic:
-            base_idx = (self.epochs - self.args.close_mosaic) * nb
-            self.plot_idx.extend([base_idx, base_idx + 1, base_idx + 2])
         epoch = self.epochs  # predefine for resume fully trained model edge cases
         for epoch in range(self.start_epoch, self.epochs):
             self.epoch = epoch
@@ -364,14 +278,6 @@ class BaseTrainer:
                 self.train_loader.sampler.set_epoch(epoch)
             pbar = enumerate(self.train_loader)
             # Update dataloader attributes (optional)
-            if epoch == (self.epochs - self.args.close_mosaic):
-                LOGGER.info("Closing dataloader mosaic")
-                if hasattr(self.train_loader.dataset, "mosaic"):
-                    self.train_loader.dataset.mosaic = False
-                if hasattr(self.train_loader.dataset, "close_mosaic"):
-                    self.train_loader.dataset.close_mosaic(hyp=self.args)
-                self.train_loader.reset()
-
             if RANK in (-1, 0):
                 LOGGER.info(self.progress_string())
                 pbar = tqdm(
@@ -519,7 +425,6 @@ class BaseTrainer:
             "optimizer": self.optimizer.state_dict(),
             "train_args": vars(self.args),  # save as dict
             "date": datetime.now().isoformat(),
-            "version": __version__,
         }
 
         # Save last, best and delete
@@ -534,12 +439,12 @@ class BaseTrainer:
             torch.save(ckpt, self.wdir / f"epoch{self.epoch}.pt")
         del ckpt
 
-    @staticmethod
-    def get_dataset(data):
-        """
-        Get train, val path from data dict if it exists. Returns None if data format is not recognized.
-        """
-        return data["train"], data.get("val") or data.get("test")
+#    @staticmethod
+#    def get_dataset(data):
+#        """
+#        Get train, val path from data dict if it exists. Returns None if data format is not recognized.
+#        """
+#        return data["train"], data.get("val") or data.get("test")
 
     def setup_model(self):
         """
@@ -683,7 +588,7 @@ class BaseTrainer:
         if resume:
             try:
                 exists = isinstance(resume, (str, Path)) and Path(resume).exists()
-                last = Path(check_file(resume) if exists else get_latest_run())
+                last = Path(check_file(resume))
 
                 # Check that resume data YAML exists, otherwise strip to force re-download of dataset
                 ckpt_args = attempt_load_weights(last).args
@@ -694,13 +599,13 @@ class BaseTrainer:
                 self.args.model, resume = str(last), True  # reinstate
             except Exception as e:
                 raise FileNotFoundError(
-                    "Resume checkpoint not found. Please pass a valid checkpoint to resume from, "
-                    "i.e. 'yolo train resume model=path/to/last.pt'"
+                    "Resume checkpoint not found. Please pass a valid checkpoint to resume from "
+                    "i.e. 'train resume model=path/to/last.pt'"
                 ) from e
         self.resume = resume
 
     def resume_training(self, ckpt):
-        """Resume YOLO training from given epoch and best fitness."""
+        """Resume training from given epoch and best fitness."""
         if ckpt is None:
             return
         best_fitness = 0.0
@@ -714,7 +619,7 @@ class BaseTrainer:
         if self.resume:
             assert start_epoch > 0, (
                 f"{self.args.model} training to {self.epochs} epochs is finished, nothing to resume.\n"
-                f"Start a new training without resuming, i.e. 'yolo train model={self.args.model}'"
+                f"Start a new training without resuming'"
             )
             LOGGER.info(
                 f"Resuming training from {self.args.model} from epoch {start_epoch + 1} to {self.epochs} total epochs"
@@ -726,12 +631,6 @@ class BaseTrainer:
             self.epochs += ckpt["epoch"]  # finetune additional epochs
         self.best_fitness = best_fitness
         self.start_epoch = start_epoch
-        if start_epoch > (self.epochs - self.args.close_mosaic):
-            LOGGER.info("Closing dataloader mosaic")
-            if hasattr(self.train_loader.dataset, "mosaic"):
-                self.train_loader.dataset.mosaic = False
-            if hasattr(self.train_loader.dataset, "close_mosaic"):
-                self.train_loader.dataset.close_mosaic(hyp=self.args)
 
     @staticmethod
     def build_optimizer(model, name="Adam", lr=0.001, momentum=0.9, decay=1e-5):
@@ -791,61 +690,3 @@ class BaseTrainer:
         )
         return optimizer
 
-
-def check_amp(model):
-    """
-    This function checks the PyTorch Automatic Mixed Precision (AMP) functionality of a YOLOv8 model.
-    If the checks fail, it means there are anomalies with AMP on the system that may cause NaN losses or zero-mAP
-    results, so AMP will be disabled during training.
-
-    Args:
-        model (nn.Module): A YOLOv8 model instance.
-
-    Returns:
-        (bool): Returns True if the AMP functionality works correctly with YOLOv8 model, else False.
-
-    Raises:
-        AssertionError: If the AMP checks fail, indicating anomalies with the AMP functionality on the system.
-    """
-    device = next(model.parameters()).device  # get model device
-    if device.type in ("cpu", "mps"):
-        return False  # AMP only used on CUDA devices
-
-    def amp_allclose(m, im):
-        """All close FP32 vs AMP results."""
-        a = m(im, device=device, verbose=False)[0].boxes.data  # FP32 inference
-        with torch.cuda.amp.autocast(True):
-            b = m(im, device=device, verbose=False)[0].boxes.data  # AMP inference
-        del m
-        return a.shape == b.shape and torch.allclose(
-            a, b.float(), atol=0.5
-        )  # close to 0.5 absolute tolerance
-
-    f = ROOT / "assets/bus.jpg"  # image to check
-    im = (
-        f
-        if f.exists()
-        else "https://ultralytics.com/images/bus.jpg"
-        if ONLINE
-        else np.ones((640, 640, 3))
-    )
-    prefix = colorstr("AMP: ")
-    LOGGER.info(
-        f"{prefix}running Automatic Mixed Precision (AMP) checks with YOLOv8n..."
-    )
-    try:
-        from ultralytics import YOLO
-
-        assert amp_allclose(YOLO("yolov8n.pt"), im)
-        LOGGER.info(f"{prefix}checks passed ✅")
-    except ConnectionError:
-        LOGGER.warning(
-            f"{prefix}checks skipped ⚠️, offline and unable to download YOLOv8n. Setting 'amp=True'."
-        )
-    except AssertionError:
-        LOGGER.warning(
-            f"{prefix}checks failed ❌. Anomalies were detected with AMP on your system that may lead to "
-            f"NaN losses or zero-mAP results, so AMP will be disabled during training."
-        )
-        return False
-    return True
