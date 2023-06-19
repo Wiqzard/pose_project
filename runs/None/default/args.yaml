@@ -1,5 +1,6 @@
 mode: train
-save_dir: /Users/sebastian/Documents/Projects/pose_project/runs/None/default
+save_dir: /home/bmw/Documents/Sebastian/pose_project/runs/None/default
+dataset_path: /home/bmw/Documents/limemod/lm
 project: null
 name: default
 model: null
@@ -12,3 +13,37 @@ imgsz: 640
 device: null
 save: true
 save_period: -1
+optimizer: AdamW
+verbose: true
+cos_lr: false
+workers: 8
+names:
+- first
+- second
+in_channels: 3
+out_channels: 3
+channels: 16
+n_res_blocks: 2
+attention_levels:
+- 1
+- 2
+attention_mode: gat
+channel_multipliers:
+- 1
+- 1
+- 2
+- 2
+unpooling_levels:
+- 0
+- 1
+- 2
+n_heads: 4
+d_cond: 1024
+lr0: 0.01
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3.0
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+nbs: 64

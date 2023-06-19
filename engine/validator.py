@@ -77,7 +77,7 @@ class BaseValidator:
         self.training = trainer is not None
         if self.training:
             self.device = trainer.device
-            self.data = trainer.data
+            #self.data = trainer.data
             model = trainer.ema.ema or trainer.model
             self.args.half = self.device.type != 'cpu'  # force FP16 val during training
             model = model.half() if self.args.half else model.float()

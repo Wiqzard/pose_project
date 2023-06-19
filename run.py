@@ -3,9 +3,12 @@ from utils.cfg_utils import get_cfg
 
 
 from engine.trainer import BaseTrainer
+from exp.mpose.mpose_trainer import MposeTrainer
 
 def main() -> int:
-    trainer = BaseTrainer()
+    #trainer = BaseTrainer()
+    trainer = MposeTrainer()
+    trainer.train()
     #print(DEFAULT_CFG)
     
     return 0

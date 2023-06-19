@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 import open3d as o3d
 
-from data_tools.bop_dataset import BOPDataset, Flag, DatasetType
+from data_tools.bop_dataset import BOPDataset, DatasetType
 from data_tools.graph_tools.graph import Graph, prepare_mesh
 from utils.bbox import Bbox
 

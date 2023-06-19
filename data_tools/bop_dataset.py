@@ -15,13 +15,7 @@ from torch.utils.data import Dataset, DataLoader
 from data_tools.graph_tools.graph import Graph
 
 from utils import LOGGER, RANK
-
-
-
-class Flag(enum.Enum):
-    TRAIN = enum.auto()
-    VAL = enum.auto()
-    TEST = enum.auto()
+from utils.flags import Mode
 
 
 class DatasetType(enum.Enum):
@@ -73,14 +67,14 @@ class BOPDataset:
     def __init__(
         self,
         path: str,
-        flag: Flag,
+        mode: Mode,
         dataset_type: DatasetType = DatasetType.LINEMOD,
         use_cache: bool = False,
         single_object: Optional[bool] = False,
     ) -> None:
         self._path = Path(path)
         self.use_cache = use_cache
-        self.flag = flag
+        self.mode = mode
         self.dataset_type = dataset_type
         self.dataset_name = self.dataset_type.name.lower()
         self.scale_to_meter = 0.001
@@ -89,12 +83,12 @@ class BOPDataset:
         if not self._path.is_dir():
             raise FileNotFoundError(f"Path {self._path} does not exist.")
 
-        if self.flag == Flag.TRAIN:
+        if self.mode == Mode.TRAIN:
             self.split_path = self._path / "train_pbr"
             self.models_root = self._path / "models"
-        elif self.flag == Flag.VAL:
-            raise ValueError("Validation set not implemented yet.")
-        elif self.flag == Flag.TEST:
+#        elif self.mode == Mode.VAL:
+#            raise ValueError("Validation set not implemented yet.")
+        elif self.mode == Mode.TEST:
             self.split_path = self._path / "test"
             self.models_root = self._path / "models_eval"
         # self.split_graphs_path = self.split_path / "graphs"
@@ -118,17 +112,17 @@ class BOPDataset:
         self.cache_path = (
             Path.cwd()
             / ".cache"
-            / f"dataset_{self.dataset_name}_{self.flag.name.lower()}.pkl"
+            / f"dataset_{self.dataset_name}_{self.mode.name.lower()}.pkl"
         )
         if use_cache and self.cache_path.is_file():
             self._load_cache()
             if bool(self._dataset["single_object"]) != self.single_object:
                 raise ValueError(
-                    "Dataset was cached with different single_object flag."
+                    "Dataset was cached with different single_object mode."
                 )
         else:
             self._dataset = self._create_dataset()
-            #self._dataset_to_single_view() if single_object else None
+            # self._dataset_to_single_view() if single_object else None
             self._cache()
 
     def _load_cache(self) -> None:
@@ -532,11 +526,10 @@ class BOPDataset:
         return copy.deepcopy(
             self._dataset["raw_img_dataset"][idx]["annotation"]["pose"]
         )
-    
+
     @require_dataset
-    def get_graph_paths(self, idx:int) -> Graph:
-       return self._dataset["raw_img_dataset"][idx]["annotation"]["graph_path"]
-        
+    def get_graph_paths(self, idx: int) -> Graph:
+        return self._dataset["raw_img_dataset"][idx]["annotation"]["graph_path"]
 
 
 def load_ply(path, vertex_scale=1.0):

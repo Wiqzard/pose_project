@@ -4,6 +4,7 @@
 
 mode: train  # mode, i.e. train, val, predict,
 save_dir:  # path to save directory
+dataset_path: /home/bmw/Documents/limemod/lm # path to dataset
 
 # Train settings -------------------------------------------------------------------------------------------------------
 project:  # project name
@@ -18,3 +19,39 @@ imgsz: 640  # size of input images as integer or w,h
 device:  # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
 save: True  # save train checkpoints and predict results
 save_period: -1 # Save checkpoint every x epochs (disabled if < 1)
+optimizer: AdamW  # (str) optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]
+verbose: True  # (bool) whether to print verbose output
+cos_lr: False  # (bool) use cosine learning rate scheduler
+workers: 8  # (int) number of worker threads for data loading (per RANK if DDP)
+
+
+
+
+# Data setting 
+names: ["first", "second"]
+
+
+# Model settings
+in_channels: 3
+out_channels: 3
+channels: 16
+n_res_blocks: 2
+attention_levels: [1, 2]
+attention_mode: "gat"
+channel_multipliers: [1, 1, 2, 2]
+unpooling_levels: [0, 1, 2]
+n_heads: 4
+d_cond: 1024
+
+
+
+# Hyperparameters ------------------------------------------------------------------------------------------------------
+lr0: 0.01  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
+lrf: 0.01  # (float) final learning rate (lr0 * lrf)
+momentum: 0.937  # (float) SGD momentum/Adam beta1
+weight_decay: 0.0005  # (float) optimizer weight decay 5e-4
+warmup_epochs: 3.0  # (float) warmup epochs (fractions ok)
+warmup_momentum: 0.8  # (float) warmup initial momentum
+warmup_bias_lr: 0.1  # (float) warmup initial bias lr
+nbs: 64  # (int) nominal batch size
+#augs

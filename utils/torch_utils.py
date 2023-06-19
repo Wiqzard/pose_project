@@ -456,3 +456,22 @@ def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
                               collate_fn=getattr(dataset, 'collate_fn', None),
                               worker_init_fn=seed_worker,
                               generator=generator)
+
+                              
+def intersect_dicts(da, db, exclude=()):
+    """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
+    return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
+
+    
+class ModelWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def load(self, weights, verbose=True):
+        model = weights['model'] if isinstance(weights, dict) else weights
+        csd = model.float().state_dict()
+        csd = intersect_dicts(csd, self.model.state_dict())
+        self.model.load_state_dict(csd, strict=False)
+        if verbose:
+            print(f'Transferred {len(csd)}/{len(self.model.state_dict())} items from pretrained weights')

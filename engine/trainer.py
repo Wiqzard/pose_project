@@ -19,7 +19,7 @@ from utils import RANK,ROOT, LOGGER,TQDM_BAR_FORMAT, DEFAULT_CFG, yaml_save, col
 from utils.cfg_utils import get_cfg, print_args
 from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStopping, generate_ddp_command, ddp_cleanup, one_cycle, strip_optimizer, attempt_load_one_weight
 from utils.checks import check_imgsz, check_file
-
+from utils.flags import Mode 
 
 
 class BaseTrainer:
@@ -72,7 +72,8 @@ class BaseTrainer:
 
         # Model and Dataset
         self.model = self.args.model
-        self.trainset, self.testset = self.get_dataset(data=None)#self.data)
+        self.dataset_path = self.args.dataset_path
+        self.trainset, self.testset = None ,None #self.get_dataset(data=None)#self.data)
         self.ema = None
 
         # Optimization utils init
@@ -166,11 +167,11 @@ class BaseTrainer:
 #            )  # backup callbacks as check_amp() resets them
 #            self.amp = torch.tensor(check_amp(self.model), device=self.device)
 #            callbacks.default_callbacks = callbacks_backup  # restore callbacks
-        if RANK > -1:  # DDP
-            dist.broadcast(
-                self.amp, src=0
-            )  # broadcast the tensor from rank 0 to all other ranks (returns None)
-        self.amp = bool(self.amp)  # as boolean
+        #if RANK > -1:  # DDP
+        #    dist.broadcast(
+        #        self.amp, src=0
+        #    )  # broadcast the tensor from rank 0 to all other ranks (returns None)
+        self.amp = False #bool(self.amp)  # as boolean
         self.scaler = amp.GradScaler(enabled=self.amp)
         if world_size > 1:
             self.model = DDP(self.model, device_ids=[RANK])
@@ -209,11 +210,11 @@ class BaseTrainer:
             self.batch_size // world_size if world_size > 1 else self.batch_size
         )
         self.train_loader = self.get_dataloader(
-            self.trainset, batch_size=batch_size, rank=RANK, mode="train"
+            self.trainset, batch_size=batch_size, rank=RANK, mode=Mode.TRAIN
         )
         if RANK in (-1, 0):
             self.test_loader = self.get_dataloader(
-                self.testset, batch_size=batch_size * 2, rank=-1, mode="val"
+                self.testset, batch_size=batch_size * 2, rank=-1, mode=Mode.TEST
             )
             self.validator = self.get_validator()
             metric_keys = self.validator.metrics.keys + self.label_loss_items(
@@ -421,13 +422,10 @@ class BaseTrainer:
             torch.save(ckpt, self.wdir / f"epoch{self.epoch}.pt")
         del ckpt
 
-#    @staticmethod
-#    def get_dataset(data):
-#        """
-#        Get train, val path from data dict if it exists. Returns None if data format is not recognized.
-#        """
-#        return data["train"], data.get("val") or data.get("test")
-
+    @staticmethod
+    def get_dataset(path):
+        raise NotImplementedError
+    
     def setup_model(self):
         """
         load/create/download model for any task.
@@ -443,7 +441,7 @@ class BaseTrainer:
             weights, ckpt = attempt_load_one_weight(model)
             cfg = ckpt["model"].yaml
         else:
-            cfg = model
+            cfg = self.args #model
         self.model = self.get_model(
             cfg=cfg, weights=weights, verbose=RANK == -1
         )  # calls Model(cfg, weights)
@@ -511,7 +509,7 @@ class BaseTrainer:
         """
         To set or update model parameters before training.
         """
-        self.model.names = self.data["names"]
+        self.model.names = self.args.names
 
     def build_targets(self, preds, targets):
         """Builds target tensors for training YOLO model."""
