@@ -7,14 +7,29 @@ class MposeValidator(BaseValidator):
     ):
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
 
+        self.metrics = None
+        
+        
     def get_desc(self):
-        """Return a formatted string summarizing class metrics of YOLO model."""
         return ("%22s" + "%11s" * 6) % (
             "Class",
             "Images",
             "Instances",
-            "Box(P",
-            "R",
-            "mAP50",
-            "mAP50-95)",
+            "Pose(TLoss",
+            "Ang",
+            "Trans",
+            "Fitness)",
         )
+
+    def init_metrics(self, model):
+        """Initialize evaluation metrics for YOLO."""
+        val = self.data.get(self.args.split, '')  # validation path
+        self.args.save_json =  not self.training  # run on final val if training 
+        self.names = model.names
+        self.nc = len(model.names)
+        self.metrics.names = self.names
+        #self.metrics.plot = self.args.plots
+        #self.confusion_matrix = ConfusionMatrix(nc=self.nc)
+        self.seen = 0
+        self.jdict = []
+        self.stats = []

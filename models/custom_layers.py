@@ -62,19 +62,20 @@ class GraphResNetBlock(nn.Module):
         super().__init__()
         if not out_channels:
             out_channels = channels
-        self.in_conv = Sequential(
-            "x, edge_index",
-            [
-                (nn.BatchNorm1d(channels), "x -> x1"),
-                (nn.Dropout(p=0.0), "x1 -> x1"),
-                (GCNConv(channels, out_channels), "x1, edge_index -> x2"),
-                (nn.SiLU(), "x2 -> x2"),
-            ],
-        )
+        #self.in_conv = Sequential(
+        #    "x1, edge_index",
+        #    [
+        #        #(nn.BatchNorm1d(channels), "x -> x1"),
+        #        (nn.Dropout(p=0.0), "x1 -> x1"),
+        #        (GCNConv(channels, out_channels), "x1, edge_index -> x2"),
+        #        (nn.SiLU(), "x2 -> x2"),
+        #    ],
+        #)
+        self.in_conv = GCNConv(channels, out_channels)
         self.out_conv = Sequential(
-            "x, edge_index",
+            "x1, edge_index",
             [
-                (nn.BatchNorm1d(out_channels), "x -> x1"),
+                #(nn.BatchNorm1d(out_channels), "x -> x1"),
                 (nn.Dropout(p=0.0), "x1 -> x1"),
                 (GCNConv(out_channels, out_channels), "x1, edge_index -> x2"),
                 (nn.SiLU(), "x2 -> x2"),

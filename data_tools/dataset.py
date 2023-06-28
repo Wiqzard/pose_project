@@ -7,9 +7,20 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from data_tools.bop_dataset import BOPDataset, Flag, DatasetType
+from data_tools.bop_dataset import BOPDataset, DatasetType
 from data_tools.graph_tools.graph import Graph
 from utils.bbox import Bbox
+
+class DatasetLM(Dataset):
+    def __init__(self, bop_dataset: BOPDataset, cfg=None) -> None:
+        super().__init__()
+        self.dataset = bop_dataset
+    
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+        
+
 
 
 class LMDataset(Dataset):

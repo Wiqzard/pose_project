@@ -41,7 +41,7 @@ class Graph:
 
     adjacency_list: Optional[np.ndarray] = None
     adjacency_matrix: Optional[np.ndarray] = None
-    edge_index: Optional[np.ndarray] = None
+    edge_index_list: Optional[np.ndarray] = None
     feature_matrix: np.ndarray = None
 
     def __post_init__(self):
@@ -129,9 +129,11 @@ class Graph:
         """
         coords_3d = self.feature_matrix[:, :3]
         coords_2d = coords_3d @ cam_k.T
-        coords_2d[:, :2] /= coords_2d[:, 2][:, None] * np.array((im_w, im_h)).reshape(
-            1, 2
-        )
+        coords_2d[:, :2] /= ( np.array((im_w, im_h)).reshape(
+            1,2))
+#        coords_2d[:, :2] /= (coords_2d[:, 2][:, None] * np.array((im_w, im_h)).reshape(
+#            1, 2
+#        ))
         self.feature_matrix[:, :2] = coords_2d[:, :2].astype(np.float32)
 
     def transform_features_to_3d_coords(self, cam_k: np.ndarray, im_w: int, im_h: int):
@@ -145,7 +147,24 @@ class Graph:
             1, 2
         )
         coords_3d = np.linalg.inv(cam_k) @ coords_3d.T
+        if coords_3d.max() > 2.5:
+            raise ValueError("3D coordinates are not in meters")
         self.feature_matrix[:, :3] = coords_3d.T.astype(np.float32)
+
+    def transform_coords(self, pose):
+        # Ensure the pointcloud and pose are numpy arrays
+        pose = np.array(pose)
+        
+        # Check that the input dimensions are correct
+        assert pose.shape == (3, 4)
+
+        # Homogenize the pointcloud coordinates to shape (N,4)
+        homogenized_pointcloud = np.hstack((self.feature_matrix, np.ones((self.feature_matrix.shape[0], 1))))
+
+        # Apply transformation: transformed_points = pose * homogenized_pointcloud
+        transformed_pointcloud = np.dot(homogenized_pointcloud, pose.T)
+        self.feature_matrix = transformed_pointcloud[:, :3]
+        #return transformed_pointcloud[:, :3]
 
     def add_self_loop(self) -> None:
         """
@@ -171,7 +190,7 @@ class Graph:
 
         This method sets the edge index list of the graph, by converting the adjacency matrix to a list of tuples.
         """
-        self.edge_index = np.array(
+        self.edge_index_list = np.array(
             [
                 (i, j)
                 for i in range(self.num_nodes)
@@ -350,7 +369,7 @@ class Graph:
         adjacency_list ,adjacency_matrix, feature_matrix = mesh_to_graph(mesh)
         return cls(adjacency_list=adjacency_list, adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
 
-    def visualize(self) -> None:
+    def visualize(self, name=None) -> None:
         """
         Visualize the graph representation of the object in 3D space using the adjacency matrix and feature matrix.
 
@@ -371,7 +390,11 @@ class Graph:
         ax.set_xlabel("X-axis")
         ax.set_ylabel("Y-axis")
         ax.set_zlabel("Z-axis")
-        plt.show()
+        if name is not None:
+            plt.savefig(name)
+        else:
+            plt.show()
+        #plt.show()
 
 
 def edge_index_to_adjacency_matrix(edge_index):

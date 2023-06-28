@@ -6,10 +6,11 @@ import torch
 from data_tools.graph_tools.graph import Graph, prepare_mesh
 from data_tools.dummy_dataset import DummyDataset
 
-from data_tools.bop_dataset import BOPDataset, Flag
+from data_tools.bop_dataset import BOPDataset
 from data_tools.dataset import LMDataset
 
-from gat_inf import GraphNet, AttentionMode, GraphUnpoolingMesh
+from gat_inf import GraphNet, AttentionMode, GraphUnpoolingMesh, edge_based_unpooling
+from utils.flags import Mode
 #sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.1, resolution=5)
 
 #sphere.compute_vertex_normals()
@@ -23,14 +24,136 @@ from gat_inf import GraphNet, AttentionMode, GraphUnpoolingMesh
 #sphere_graph = Graph.from_mesh(sphere)
 
 dataset = BOPDataset(
-    "/Users/sebastian/Documents/Projects/pose_project/data/datasets/lm",
-    Flag.TRAIN,
+    "/home/bmw/Documents/limemod/lm",#home/bmw/Documents/limemod/lm",
+    Mode.TRAIN,
     use_cache=True,
     single_object=False,
 )
 dummy_dataset = DummyDataset(bop_dataset=dataset)
-input_ = dummy_dataset._generate_initial_graph(0)
 
+inp = dummy_dataset[0]
+
+arrow = Graph.from_mesh(dummy_dataset.ARROW)
+arrow.set_edge_index()
+arrow.visualize("temp/arrow.png")
+
+e, x= edge_based_unpooling(torch.from_numpy(arrow.edge_index_list).T, torch.from_numpy(arrow.feature_matrix))
+arrow_unpool = Graph(feature_matrix=x.numpy(), edge_index_list=e.numpy().T)
+arrow_unpool.visualize("temp/arrow_unpool.png")
+
+
+from torch_geometric.nn import GCNConv
+from models.custom_layers import GeGLU, LearnedPositionalEmbeddings, GraphResNetBlock
+gcn_conv = GCNConv(3, 16)
+resnet = GraphResNetBlock(3, 16, 16)
+out_i = gcn_conv(inp[1], inp[2])
+out = gcn_conv(torch.from_numpy(arrow.feature_matrix).float(), torch.from_numpy(arrow.edge_index_list).long().T)
+out_res = resnet(torch.from_numpy(arrow.feature_matrix).float(), torch.from_numpy(arrow.edge_index_list).long().T)
+
+graph_net = GraphNet(
+    in_channels=3, 
+    out_channels=3, 
+    channels=16,
+    n_res_blocks=2,
+    attention_levels=[1, 2],
+    attention_mode=AttentionMode.GAT,
+    channel_multipliers=[1, 1, 2, 2],
+    unpooling_levels=[], # only in downsampling, avoid unpooling in last level
+    n_heads=4,
+    d_cond=1024,
+)
+
+
+
+
+
+
+#####################################
+input_ = dummy_dataset._generate_initial_graph(0)
+for i in range(1, len(dataset)):
+    graph = dummy_dataset._generate_graph_for_img(i)
+    feats = graph.feature_matrix
+    # compute com
+    com = np.mean(feats, axis=0)
+    if com.max() > 2:
+        print("com: ", com)
+        print("index: ", i)
+        print("feats: ", feats)
+from pytorch3d.structures import Meshes, Pointclouds
+import torch
+
+import numpy as np
+
+def transform_pointcloud(pointcloud, pose):
+    # Ensure the pointcloud and pose are numpy arrays
+    pointcloud = np.array(pointcloud)
+    pose = np.array(pose)
+    
+    # Check that the input dimensions are correct
+    assert pointcloud.shape[1] == 3
+    assert pose.shape == (3, 4)
+
+    # Homogenize the pointcloud coordinates to shape (N,4)
+    homogenized_pointcloud = np.hstack((pointcloud, np.ones((pointcloud.shape[0], 1))))
+
+    # Apply transformation: transformed_points = pose * homogenized_pointcloud
+    transformed_pointcloud = np.dot(homogenized_pointcloud, pose.T)
+
+    return transformed_pointcloud[:, :3]
+
+randn_graph = Graph.from_mesh(dummy_dataset.ARROW)# Graph.create_random_graph(10,3)
+randn_graph.visualize("t1.png")
+pose = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0]])
+pose = np.array([[    0.85704,    0.067054,    -0.51087,       216.4],
+
+ [   -0.33614,     -0.6787,    -0.65298,      88.047],
+ [   -0.39051,     0.73135,    -0.55913,      808.46]])
+transformed_pointcloud = transform_pointcloud(randn_graph.feature_matrix, pose)
+randn_graph.feature_matrix = transformed_pointcloud
+randn_graph.visualize("t2.png")
+
+def graph_to_meshes(node_features, edge_index):
+    """
+    Transforms a graph feature matrix and edge index list consisting of multiple
+    disconnected graphs into a list of PyTorch3D Meshes or Pointclouds objects,
+    where each object is a connected graph.
+
+    Args:
+        node_features: tensor with node features of shape (N_nodes, Feat_dim).
+        edge_index: tensor with edge indices of shape (2, Num_edges).
+
+    Returns:
+        meshes: list of PyTorch3D Meshes or Pointclouds objects.
+    """
+    # Determine the connected components of the graph
+    components = connected_components(edge_index)
+
+    # Initialize an empty list to store the individual Meshes or Pointclouds objects
+    meshes = []
+
+    # Loop over each connected component and create a Meshes or Pointclouds object
+    for i in range(components.max() + 1):
+        # Find the nodes that belong to the current component
+        nodes = (components == i).nonzero().squeeze()
+
+        # Extract the corresponding node features
+        vertices = node_features[nodes]
+
+        # Extract the corresponding edges
+        edges = edge_index[:, nodes]
+        edges = edges - edges.min()  # Shift edge indices so they start at 0
+
+        # Note: PyTorch3D's Meshes data structure assumes 3D meshes
+        # But if you don't have 3D data or face info, you could use Pointclouds instead
+        # Here we assume we only have vertices (i.e., 3D points), and no faces
+        # So we use Pointclouds to represent our graphs
+        point_cloud = Pointclouds(points=vertices.unsqueeze(0))
+
+        meshes.append(point_cloud)
+
+    return meshes
+
+#meshes = graph_to_meshes(torch.from_numpy(input_.feature_matrix), torch.from_numpy(input_.edge_index).T)
 
 graph_net = GraphNet(
     in_channels=3, 

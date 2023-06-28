@@ -5,6 +5,7 @@
 mode: train  # mode, i.e. train, val, predict,
 save_dir:  # path to save directory
 dataset_path: /home/bmw/Documents/limemod/lm # path to dataset
+debug: True # (bool) enable debug mode
 
 # Train settings -------------------------------------------------------------------------------------------------------
 project:  # project name
@@ -14,17 +15,32 @@ data_path:  # path to dataset
 resume:  False # resume training from checkpoint
 epochs: 100  # number of epochs to train for
 patience: 50  # epochs to wait for no observable improvement for early stopping of training
-batch: 16  # number of images per batch (-1 for AutoBatch)
+batch: 1  # number of images per batch (-1 for AutoBatch)
 imgsz: 640  # size of input images as integer or w,h
+inp_size: 224
 device:  # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
 save: True  # save train checkpoints and predict results
 save_period: -1 # Save checkpoint every x epochs (disabled if < 1)
 optimizer: AdamW  # (str) optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]
 verbose: True  # (bool) whether to print verbose output
 cos_lr: False  # (bool) use cosine learning rate scheduler
-workers: 8  # (int) number of worker threads for data loading (per RANK if DDP)
+workers: 1 #8  # (int) number of worker threads for data loading (per RANK if DDP)
+plots: True  # (bool) plot training results
 
+# Val/Test settings ----------------------------------------------------------------------------------------------------
+val: True  # (bool) validate/test during training
+split: val  # (str) dataset split to use for validation, i.e. 'val', 'test' or 'train'
+save_json: False  # (bool) save results to JSON file
+save_hybrid: False  # (bool) save hybrid version of labels (labels + additional predictions)
+conf:  # (float, optional) object confidence threshold for detection (default 0.25 predict, 0.001 val)
+half: False  # (bool) use half precision (FP16)
+dnn: False  # (bool) use OpenCV DNN for ONNX inference
+plots: True  # (bool) save plots during train/val
 
+# Prediction settings --------------------------------------------------------------------------------------------------
+source:  # (str, optional) source directory for images or videos
+show: False  # (bool) show results if possible
+save_txt: False  # (bool) save results as .txt file
 
 
 # Data setting 
@@ -32,16 +48,26 @@ names: ["first", "second"]
 
 
 # Model settings
+
+backbone:
+  freeze: True
+  type: maxxvitv2_rmlp_base_rw_224.sw_in12k
+  init_cfg:
+        pretrained: True 
+        in_chans: 3
+        features_only: True
+        out_indices: [4, ]  
+
 in_channels: 3
 out_channels: 3
 channels: 16
 n_res_blocks: 2
-attention_levels: [1, 2]
+attention_levels: [0,1, 2,3]
 attention_mode: "gat"
-channel_multipliers: [1, 1, 2, 2]
-unpooling_levels: [0, 1, 2]
+channel_multipliers: [1, 2, 2, 4, 4, 8]
+unpooling_levels: [0, 1]
 n_heads: 4
-d_cond: 1024
+d_cond: 768 #1024
 
 
 
@@ -50,7 +76,7 @@ lr0: 0.01  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
 lrf: 0.01  # (float) final learning rate (lr0 * lrf)
 momentum: 0.937  # (float) SGD momentum/Adam beta1
 weight_decay: 0.0005  # (float) optimizer weight decay 5e-4
-warmup_epochs: 3.0  # (float) warmup epochs (fractions ok)
+warmup_epochs: 0 #3.0  # (float) warmup epochs (fractions ok)
 warmup_momentum: 0.8  # (float) warmup initial momentum
 warmup_bias_lr: 0.1  # (float) warmup initial bias lr
 nbs: 64  # (int) nominal batch size

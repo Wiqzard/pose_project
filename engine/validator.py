@@ -5,16 +5,25 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-#from ultralytics.nn.autobackend import AutoBackend
-#from ultralytics.yolo.cfg import get_cfg
-#from ultralytics.yolo.data.utils import check_cls_dataset, check_det_dataset
-#from ultralytics.yolo.utils import DEFAULT_CFG, LOGGER, RANK, SETTINGS, TQDM_BAR_FORMAT, callbacks, colorstr, emojis
-#from ultralytics.yolo.utils.checks import check_imgsz
-#from ultralytics.yolo.utils.files import increment_path
-#from ultralytics.yolo.utils.ops import Profile
-#from ultralytics.yolo.utils.torch_utils import de_parallel, select_device, smart_inference_mode
+# from ultralytics.nn.autobackend import AutoBackend
+# from ultralytics.yolo.cfg import get_cfg
+# from ultralytics.yolo.data.utils import check_cls_dataset, check_det_dataset
+# from ultralytics.yolo.utils import DEFAULT_CFG, LOGGER, RANK, SETTINGS, TQDM_BAR_FORMAT, callbacks, colorstr, emojis
+# from ultralytics.yolo.utils.checks import check_imgsz
+# from ultralytics.yolo.utils.files import increment_path
+# from ultralytics.yolo.utils.ops import Profile
+# from ultralytics.yolo.utils.torch_utils import de_parallel, select_device, smart_inference_mode
 from utils.cfg_utils import get_cfg
-from utils import DEFAULT_CFG, LOGGER, RANK, SETTINGS, TQDM_BAR_FORMAT, callbacks, colorstr, emojis, Profile
+from utils import (
+    DEFAULT_CFG,
+    LOGGER,
+    RANK,
+    TQDM_BAR_FORMAT,
+    callbacks,
+    colorstr,
+    emojis,
+    Profile,
+)
 from utils.checks import check_imgsz
 from utils.torch_utils import de_parallel, select_device
 
@@ -39,7 +48,9 @@ class BaseValidator:
         save_dir (Path): Directory to save results.
     """
 
-    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
+    def __init__(
+        self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None
+    ):
         """
         Initializes a BaseValidator instance.
 
@@ -57,14 +68,20 @@ class BaseValidator:
         self.device = None
         self.batch_i = None
         self.training = True
-        self.speed = {'preprocess': 0.0, 'inference': 0.0, 'loss': 0.0, 'postprocess': 0.0}
+        self.speed = {
+            "preprocess": 0.0,
+            "inference": 0.0,
+            "loss": 0.0,
+            "postprocess": 0.0,
+        }
         self.jdict = None
 
-        project = self.args.project or Path(SETTINGS['runs_dir']) / self.args.task
-        name = self.args.name or f'{self.args.mode}'
-        self.save_dir = Path(self.args.save_dir) / name / 'val' 
-        (self.save_dir / 'labels' if self.args.save_txt else self.save_dir).mkdir(parents=True, exist_ok=True)
-
+        # project = self.args.project or Path(SETTINGS['runs_dir']) / self.args.task
+        name = self.args.name or f"{self.args.mode}"
+        self.save_dir = Path(self.args.save_dir) / name / "val"
+        (self.save_dir / "labels" if self.args.save_txt else self.save_dir).mkdir(
+            parents=True, exist_ok=True
+        )
 
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
 
@@ -77,20 +94,26 @@ class BaseValidator:
         self.training = trainer is not None
         if self.training:
             self.device = trainer.device
-            #self.data = trainer.data
+            # self.data = trainer.data
             model = trainer.ema.ema or trainer.model
-            self.args.half = self.device.type != 'cpu'  # force FP16 val during training
+            self.args.half = self.device.type != "cpu"  # force FP16 val during training
             model = model.half() if self.args.half else model.float()
             self.model = model
             self.loss = torch.zeros_like(trainer.loss_items, device=trainer.device)
             model.eval()
         else:
             callbacks.add_integration_callbacks(self)
-            self.run_callbacks('on_val_start')
-            assert model is not None, 'Either trainer or model is needed for validation'
+            self.run_callbacks("on_val_start")
+            assert model is not None, "Either trainer or model is needed for validation"
             self.device = select_device(self.args.device, self.args.batch)
-            self.args.half &= self.device.type != 'cpu'
-            model = AutoBackend(model, device=self.device, dnn=self.args.dnn, data=self.args.data, fp16=self.args.half)
+            self.args.half &= self.device.type != "cpu"
+            model = AutoBackend(
+                model,
+                device=self.device,
+                dnn=self.args.dnn,
+                data=self.args.data,
+                fp16=self.args.half,
+            )
             self.model = model
             stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
             imgsz = check_imgsz(self.args.imgsz, stride=stride)
@@ -100,23 +123,35 @@ class BaseValidator:
                 self.device = model.device
                 if not pt and not jit:
                     self.args.batch = 1  # export.py models default to batch-size 1
-                    LOGGER.info(f'Forcing batch=1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models')
+                    LOGGER.info(
+                        f"Forcing batch=1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models"
+                    )
 
-            if isinstance(self.args.data, str) and self.args.data.endswith('.yaml'):
+            if isinstance(self.args.data, str) and self.args.data.endswith(".yaml"):
                 self.data = check_det_dataset(self.args.data)
-            elif self.args.task == 'classify':
+            elif self.args.task == "classify":
                 self.data = check_cls_dataset(self.args.data, split=self.args.split)
             else:
-                raise FileNotFoundError(emojis(f"Dataset '{self.args.data}' for task={self.args.task} not found ❌"))
+                raise FileNotFoundError(
+                    emojis(
+                        f"Dataset '{self.args.data}' for task={self.args.task} not found ❌"
+                    )
+                )
 
-            if self.device.type == 'cpu':
-                self.args.workers = 0  # faster CPU val as time dominated by inference, not dataloading
+            if self.device.type == "cpu":
+                self.args.workers = (
+                    0  # faster CPU val as time dominated by inference, not dataloading
+                )
             if not pt:
                 self.args.rect = False
-            self.dataloader = self.dataloader or self.get_dataloader(self.data.get(self.args.split), self.args.batch)
+            self.dataloader = self.dataloader or self.get_dataloader(
+                self.data.get(self.args.split), self.args.batch
+            )
 
             model.eval()
-            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
+            model.warmup(
+                imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz)
+            )  # warmup
 
         dt = Profile(), Profile(), Profile(), Profile()
         n_batches = len(self.dataloader)
@@ -128,7 +163,7 @@ class BaseValidator:
         self.init_metrics(de_parallel(model))
         self.jdict = []  # empty before each val
         for batch_i, batch in enumerate(bar):
-            self.run_callbacks('on_val_batch_start')
+            self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
             # Preprocess
             with dt[0]:
@@ -136,7 +171,7 @@ class BaseValidator:
 
             # Inference
             with dt[1]:
-                preds = model(batch['img'], augment=self.args.augment)
+                preds = model(batch["img"], augment=self.args.augment)
 
             # Loss
             with dt[2]:
@@ -149,23 +184,37 @@ class BaseValidator:
 
             self.update_metrics(preds, batch)
 
-            self.run_callbacks('on_val_batch_end')
+            self.run_callbacks("on_val_batch_end")
         stats = self.get_stats()
         self.check_stats(stats)
-        self.speed = dict(zip(self.speed.keys(), (x.t / len(self.dataloader.dataset) * 1E3 for x in dt)))
+        self.speed = dict(
+            zip(
+                self.speed.keys(),
+                (x.t / len(self.dataloader.dataset) * 1e3 for x in dt),
+            )
+        )
         self.finalize_metrics()
         self.print_results()
-        self.run_callbacks('on_val_end')
+        self.run_callbacks("on_val_end")
         if self.training:
             model.float()
-            results = {**stats, **trainer.label_loss_items(self.loss.cpu() / len(self.dataloader), prefix='val')}
-            return {k: round(float(v), 5) for k, v in results.items()}  # return results as 5 decimal place floats
+            results = {
+                **stats,
+                **trainer.label_loss_items(
+                    self.loss.cpu() / len(self.dataloader), prefix="val"
+                ),
+            }
+            return {
+                k: round(float(v), 5) for k, v in results.items()
+            }  # return results as 5 decimal place floats
         else:
-            LOGGER.info('Speed: %.1fms preprocess, %.1fms inference, %.1fms loss, %.1fms postprocess per image' %
-                        tuple(self.speed.values()))
+            LOGGER.info(
+                "Speed: %.1fms preprocess, %.1fms inference, %.1fms loss, %.1fms postprocess per image"
+                % tuple(self.speed.values())
+            )
             if self.args.save_json and self.jdict:
-                with open(str(self.save_dir / 'predictions.json'), 'w') as f:
-                    LOGGER.info(f'Saving {f.name}...')
+                with open(str(self.save_dir / "predictions.json"), "w") as f:
+                    LOGGER.info(f"Saving {f.name}...")
                     json.dump(self.jdict, f)  # flatten and save
                 stats = self.eval_json(stats)  # update stats
             return stats
@@ -181,11 +230,13 @@ class BaseValidator:
 
     def get_dataloader(self, dataset_path, batch_size):
         """Get data loader from dataset path and batch size."""
-        raise NotImplementedError('get_dataloader function not implemented for this validator')
+        raise NotImplementedError(
+            "get_dataloader function not implemented for this validator"
+        )
 
     def build_dataset(self, img_path):
         """Build dataset"""
-        raise NotImplementedError('build_dataset function not implemented in validator')
+        raise NotImplementedError("build_dataset function not implemented in validator")
 
     def preprocess(self, batch):
         """Preprocesses an input batch."""

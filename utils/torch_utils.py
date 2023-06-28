@@ -467,6 +467,10 @@ class ModelWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+    
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
+        
 
     def load(self, weights, verbose=True):
         model = weights['model'] if isinstance(weights, dict) else weights

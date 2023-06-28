@@ -5,13 +5,14 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
+import cv2
 
+from copy import deepcopy
 import open3d as o3d
 
 from data_tools.bop_dataset import BOPDataset, DatasetType
 from data_tools.graph_tools.graph import Graph, prepare_mesh
 from utils.bbox import Bbox
-
 
 
 class InitialModel(Enum):
@@ -20,22 +21,62 @@ class InitialModel(Enum):
 
 
 class DummyDataset(Dataset):
-    ARROW = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=40, cone_radius=50, cylinder_height=200, cone_height=100, resolution=10, cylinder_split=4, cone_split=1)
+    ARROW = o3d.geometry.TriangleMesh.create_arrow(
+        cylinder_radius=40,
+        cone_radius=50,
+        cylinder_height=200,
+        cone_height=100,
+        resolution=10,
+        cylinder_split=4,
+        cone_split=1,
+    )
 
     def __init__(self, bop_dataset: BOPDataset, cfg=None) -> None:
         super().__init__()
         self.dataset = bop_dataset
         self.length = 0.1
-        self.im_height, self.im_width  = 480, 640
-        
+        self.im_height, self.im_width = 480, 640
 
     def __len__(self) -> int:
         return len(self.dataset)
 
+    def __getitem__(self, index) -> Any:
+#        print("index: ", index)
+        img_path = self.dataset.get_img_path(index)
+        img = cv2.imread(str(img_path))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # resize to 224
+        img = cv2.resize(img, (224, 224))
+ 
+        
+
+
+        graph = self._generate_initial_graph(index)
+        graph_gt = self._generate_graph_for_img(index)
+        
+
+        img = torch.from_numpy(img).float().permute(2, 0, 1)
+        graph_features = torch.from_numpy(graph.feature_matrix).float()
+        graph_edge_index = torch.from_numpy(graph.edge_index_list).long().T
+        graph_gt_features = torch.from_numpy(graph_gt.feature_matrix).float()
+        graph_gt_edge_index = torch.from_numpy(graph_gt.edge_index_list).long().T
+        return (
+            img,
+            graph_features,
+            graph_edge_index,
+            graph_gt_features,
+            graph_gt_edge_index,
+        )
+
     def _generate_initial_graph(self, idx: int) -> Graph:
         bbox_objs = self.dataset.get_bbox_objs(idx)
         # could be cx cy h w, byt also x y h w (left top)
-        centers = np.array([np.asarray([bbox[0]/self.im_width,bbox[1]/self.im_height]) for bbox in bbox_objs])
+        centers = np.array(
+            [
+                np.asarray([bbox[0] / self.im_width, bbox[1] / self.im_height])
+                for bbox in bbox_objs
+            ]
+        )
         initial_feat, initial_adj = self.get_inital_model(
             self.length, InitialModel.TETRAHEDRON
         )
@@ -45,7 +86,7 @@ class DummyDataset(Dataset):
         centers_adj = np.repeat(centers, initial_feat.shape[0], axis=0)
         initial_features[:, :2] += centers_adj
         initial_features[:, 2] += 0.5
-        
+
         num_nodes = centers.shape[0] * 4
         adjacency_matrix = np.zeros((num_nodes, num_nodes))
         for i in range(centers.shape[0]):
@@ -55,6 +96,8 @@ class DummyDataset(Dataset):
         graph = Graph(
             adjacency_matrix=adjacency_matrix, feature_matrix=initial_features
         )
+        graph.add_self_loop()
+        graph.visualize('temp/initial_graph.png') 
         graph.set_edge_index()
         return graph
 
@@ -64,21 +107,37 @@ class DummyDataset(Dataset):
         num_objs = len(poses)
         total_num_nodes = num_objs * 64
         feature_matrix = np.zeros((total_num_nodes, 3))
-        adjacency_matrix = np.zeros((total_num_nodes, total_num_nodes)) 
-
+        adjacency_matrix = np.zeros((total_num_nodes, total_num_nodes))
+        arrow = Graph.from_mesh(self.ARROW)
+        arrow.set_edge_index()
         for i in range(num_objs):
-            mesh = prepare_mesh(mesh=self.ARROW, simplify_factor=0, pose=poses[i], intrinsic_matrix=cam,
-                                img_width=self.im_width, img_height=self.im_height)
-            graph = Graph.from_mesh(mesh)
-            adjacency_matrix[i * 64 : (i + 1) * 64, i * 64 : (i + 1) * 64] = graph.adjacency_matrix 
-            features = graph.feature_matrix #- np.mean(graph.feature_matrix, axis=0)
+#            mesh = prepare_mesh(
+#                mesh=self.ARROW,
+#                simplify_factor=0,
+#                pose=poses[i],
+#                intrinsic_matrix=cam,
+#                img_width=self.im_width,
+#                img_height=self.im_height,
+#            )
+#            graph = Graph.from_mesh(mesh)
+            graph = deepcopy(arrow)
+            pose = poses[i]
+            pose[:3, 3] = pose[:3, 3] / 1000
+            graph.transform_coords(pose)
+            adjacency_matrix[
+                i * 64 : (i + 1) * 64, i * 64 : (i + 1) * 64
+            ] = graph.adjacency_matrix
+            features = graph.feature_matrix  # - np.mean(graph.feature_matrix, axis=0)
             feature_matrix[i * 64 : (i + 1) * 64, :] = features
-        graph = Graph(
-            adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix
-        )
+        graph = Graph(adjacency_matrix=adjacency_matrix, feature_matrix=feature_matrix)
+        #graph.visualize("1.png")
         graph.set_edge_index()
+        graph.transform_features_to_site(cam_k=cam, im_w=640, im_h=480)
+        if graph.feature_matrix.max() > 2.5:
+            raise ValueError("Feature matrix is too big")
+        #graph.visualize("2.png")
         return graph
-         
+
     def get_inital_model(
         self, length: float, model_type: InitialModel
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -101,7 +160,6 @@ class DummyDataset(Dataset):
             )
             tetrahedron -= np.mean(tetrahedron, axis=0)
             return tetrahedron, tetra_adjacency_matrix
-
 
 
 def edge_based_unpooling(edge_index, feature_matrix):

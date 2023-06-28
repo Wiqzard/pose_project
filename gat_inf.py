@@ -85,9 +85,9 @@ class GraphUnpoolingMesh(nn.Module):
         #new_features_coords = torch.mean(x[edge_index][:, :, :3], dim=1)
         #remaining_features = torch.mean(x[edge_index][:, :, 3:], dim=1)
         #new_features = torch.cat([new_features_coords, remaining_features], dim=-1)
-        edge_index, new_features = edge_based_unpooling(edge_index, x)
+        new_edge_index, new_features = edge_based_unpooling(edge_index, x)
 
-        return new_features, edge_index
+        return new_features, new_edge_index
 
 def edge_based_unpooling(edge_index, feature_matrix):
     edge_index = edge_index.T
@@ -102,7 +102,7 @@ def edge_based_unpooling(edge_index, feature_matrix):
 
     # Create new edge index with new edges connecting old nodes with new nodes
     #new_node_indices = torch.arange(num_nodes, num_nodes + num_edges).unsqueeze(-1)
-    new_node_indices = torch.arange(num_nodes, new_feature_matrix.shape[0]).unsqueeze(-1)
+    new_node_indices = torch.arange(num_nodes, new_feature_matrix.shape[0]).unsqueeze(-1).to(feature_matrix.device)
     new_edges_1 = torch.cat([edge_index[:, 0].unsqueeze(-1), new_node_indices], dim=1)
     new_edges_2 = torch.cat([new_node_indices, edge_index[:, 1].unsqueeze(-1)], dim=1)
 
@@ -112,7 +112,7 @@ def edge_based_unpooling(edge_index, feature_matrix):
     # Connect the three new vertices for each old triangle
     #for i in range(num_nodes, num_nodes + num_edges, 3):
     for i in range(num_nodes, new_feature_matrix.shape[0]-2, 3):
-        triangle_edges = torch.tensor([[i, i + 1], [i + 1, i + 2], [i + 2, i]])
+        triangle_edges = torch.tensor([[i, i + 1], [i + 1, i + 2], [i + 2, i]]).to(feature_matrix.device)
         new_edge_index = torch.cat([new_edge_index, triangle_edges], dim=0)
 
     return new_edge_index.T, new_feature_matrix
@@ -120,6 +120,7 @@ def edge_based_unpooling(edge_index, feature_matrix):
 class GraphNet(nn.Module):
     def __init__(
         self,
+        backbone,
         in_channels: int,
         out_channels: int,
         channels: int,
@@ -144,6 +145,7 @@ class GraphNet(nn.Module):
             d_cond (int, optional): The dimension of the conditioning vector. Defaults to 768.
         """
         super().__init__()
+        self.backbone = backbone
         self.channels = channels
         levels = len(channel_multipliers)
         d_time_emb = None
@@ -159,11 +161,12 @@ class GraphNet(nn.Module):
             raise ValueError(f"Unknown attention mode: {attention_mode}")
 
         self.unpooling_layer = GraphUnpoolingMesh()
+        self.in_proj = GCNConv(in_channels, channels)
 
         self.input_blocks = nn.ModuleList([])
-        self.input_blocks.append(
-            TimestepEmbedSequential(GCNConv(in_channels, channels))
-        )
+#        self.input_blocks.append(
+#            TimestepEmbedSequential(GCNConv(in_channels, channels))
+#        )
         input_block_channels = [channels]
         channels_list = [channels * m for m in channel_multipliers]
 
@@ -239,23 +242,31 @@ class GraphNet(nn.Module):
 
         self.out_norm =nn.GroupNorm(16, channels)
         self.out_act = nn.SiLU()
-        self.out = GCNConv(channels, out_channels)
+        self.out = nn.Linear(channels, out_channels)
+        #self.out = GCNConv(channels, out_channels)
+        self.z_extra = SpatialTransformer(channels, 8, 8, d_cond=d_cond)
 
-    def forward(self, x, edge_index, t_emb=None, cond=None):
+    def forward(self, x, edge_index,  cond=None,t_emb=None):
+        cond = self.backbone(cond)#[0]
+        #cond = cond.flatten(2)
+        #cond = cond.permute(0, 2, 1)
 
+        x = self.in_proj(x, edge_index)
+        x = self.z_extra(x, edge_index, cond)
+        
         for module in self.input_blocks:
             
             x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
             #x_input_block.append(x)
-            print(x.shape)
+            #print(x.shape)
         x = self.middle_block(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
 
         for module in self.output_blocks:
             x = module(x=x, edge_index=edge_index, t_emb=t_emb, cond=cond)
             if isinstance(x, tuple):
                 x, edge_index = x
-            print(x.shape)
-        return self.out(x, edge_index), edge_index    
+            #print(x.shape)
+        return self.out(x), edge_index #self.out(x, edge_index), edge_index    
             
 class Gatv2CrossAttention(MessagePassing):
     _alpha: OptTensor
@@ -698,7 +709,7 @@ class CrossAttention(nn.Module):
         else:
             out = out.reshape(*out.shape[:2], -1)
             out = self.out_proj(out)
-            return out.reshsape(-1, self.d_model)
+            return out.reshape(-1, self.d_model)
 
 
 import torch

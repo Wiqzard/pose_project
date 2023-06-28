@@ -21,7 +21,6 @@ from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStoppin
 from utils.checks import check_imgsz, check_file
 from utils.flags import Mode 
 
-
 class BaseTrainer:
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
         """
@@ -87,6 +86,7 @@ class BaseTrainer:
         self.tloss = None
         self.loss_names = ["Loss"]
         self.csv = self.save_dir / "results.csv"
+        self.plot_idx = [1, 2000, 10000]
 
         # Callbacks
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
@@ -216,16 +216,16 @@ class BaseTrainer:
             self.test_loader = self.get_dataloader(
                 self.testset, batch_size=batch_size * 2, rank=-1, mode=Mode.TEST
             )
-            self.validator = self.get_validator()
-            metric_keys = self.validator.metrics.keys + self.label_loss_items(
-                prefix="val"
-            )
-            self.metrics = dict(
-                zip(metric_keys, [0] * len(metric_keys))
-            )  # TODO: init metrics for plot_results()?
+            #self.validator = self.get_validator()
+            #metric_keys = self.validator.metrics.keys + self.label_loss_items(
+            #    prefix="val"
+            #)
+          #  self.metrics = dict(
+          #      zip(metric_keys, [0] * len(metric_keys))
+          #  )  # TODO: init metrics for plot_results()?
             self.ema = ModelEMA(self.model)
-            if self.args.plots and not self.args.v5loader:
-                self.plot_training_labels()
+         #   if self.args.plots and not self.args.v5loader:
+         #       self.plot_training_labels()
         self.resume_training(ckpt)
         self.scheduler.last_epoch = self.start_epoch - 1  # do not move
         self.run_callbacks("on_pretrain_routine_end")
@@ -296,7 +296,7 @@ class BaseTrainer:
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-                    preds = self.model(batch["img"])
+                    preds = self.model(x=batch[1], edge_index=batch[2], cond=batch[0])
                     self.loss, self.loss_items = self.criterion(preds, batch)
                     if RANK != -1:
                         self.loss *= world_size
@@ -316,22 +316,24 @@ class BaseTrainer:
 
                 # Log
                 mem = f"{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G"  # (GB)
+                lr = self.optimizer.param_groups[0]["lr"]
                 loss_len = self.tloss.shape[0] if len(self.tloss.size()) else 1
                 losses = self.tloss if loss_len > 1 else torch.unsqueeze(self.tloss, 0)
                 if RANK in (-1, 0):
                     pbar.set_description(
-                        ("%11s" * 2 + "%11.4g" * (2 + loss_len))
+                        ("%11s" * 2 + "%11.5g" + "%11.4g" * ( loss_len)) #+2
                         % (
                             f"{epoch + 1}/{self.epochs}",
                             mem,
+                            round(lr, 5),
                             *losses,
-                            batch["cls"].shape[0],
-                            batch["img"].shape[-1],
+                           # batch["cls"].shape[0],
+                           # batch["img"].shape[-1],
                         )
                     )
                     self.run_callbacks("on_batch_end")
                     if self.args.plots and ni in self.plot_idx:
-                        self.plot_training_samples(batch, ni)
+                        self.plot_training_samples(batch,preds, ni)
 
                 self.run_callbacks("on_train_batch_end")
 
@@ -343,29 +345,29 @@ class BaseTrainer:
             self.scheduler.step()
             self.run_callbacks("on_train_epoch_end")
 
-            if RANK in (-1, 0):
-                # Validation
-                self.ema.update_attr(
-                    self.model,
-                    include=["yaml", "nc", "args", "names", "stride", "class_weights"],
-                )
-                final_epoch = (epoch + 1 == self.epochs) or self.stopper.possible_stop
-
-                if self.args.val or final_epoch:
-                    self.metrics, self.fitness = self.validate()
-                self.save_metrics(
-                    metrics={
-                        **self.label_loss_items(self.tloss),
-                        **self.metrics,
-                        **self.lr,
-                    }
-                )
-                self.stop = self.stopper(epoch + 1, self.fitness)
-
-                # Save model
-                if self.args.save or (epoch + 1 == self.epochs):
-                    self.save_model()
-                    self.run_callbacks("on_model_save")
+#            if RANK in (-1, 0):
+#                # Validation
+#                self.ema.update_attr(
+#                    self.model,
+#                    include=["yaml", "nc", "args", "names", "stride", "class_weights"],
+#                )
+#                final_epoch = (epoch + 1 == self.epochs) or self.stopper.possible_stop
+#
+#                if self.args.val or final_epoch:
+#                    self.metrics, self.fitness = self.validate()
+#                self.save_metrics(
+#                    metrics={
+#                        **self.label_loss_items(self.tloss),
+#                        **self.metrics,
+#                        **self.lr,
+#                    }
+#                )
+#                self.stop = self.stopper(epoch + 1, self.fitness)
+#
+#                # Save model
+#                if self.args.save or (epoch + 1 == self.epochs):
+#                    self.save_model()
+#                    self.run_callbacks("on_model_save")
 
             tnow = time.time()
             self.epoch_time = tnow - self.epoch_time_start
@@ -483,7 +485,9 @@ class BaseTrainer:
 
     def get_validator(self):
         """Returns a NotImplementedError when the get_validator function is called."""
-        raise NotImplementedError("get_validator function not implemented in trainer")
+        self.loss_names = ["loss"]
+        return 
+        #raise NotImplementedError("get_validator function not implemented in trainer")
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
         """
@@ -520,7 +524,7 @@ class BaseTrainer:
         return ""
 
     # TODO: may need to put these following functions into callback
-    def plot_training_samples(self, batch, ni):
+    def plot_training_samples(self, batch, preds, ni):
         """Plots training samples during YOLOv5 training."""
         pass
 

@@ -3,11 +3,13 @@ from pathlib import Path
 import enum
 import json
 import pickle
+import dill
 import json
 from tqdm import tqdm
 import copy
 import struct
 import open3d as o3d
+import trimesh
 
 import numpy as np
 import torch
@@ -71,6 +73,7 @@ class BOPDataset:
         dataset_type: DatasetType = DatasetType.LINEMOD,
         use_cache: bool = False,
         single_object: Optional[bool] = False,
+        num_points: Optional[int] = 1000,
     ) -> None:
         self._path = Path(path)
         self.use_cache = use_cache
@@ -79,6 +82,7 @@ class BOPDataset:
         self.dataset_name = self.dataset_type.name.lower()
         self.scale_to_meter = 0.001
         self.single_object = single_object
+        self.num_points = num_points
 
         if not self._path.is_dir():
             raise FileNotFoundError(f"Path {self._path} does not exist.")
@@ -133,7 +137,7 @@ class BOPDataset:
         try:
             with open(self.cache_path, "rb") as f:
                 # self._dataset = json.load(f)
-                self._dataset = pickle.load(f)
+                self._dataset = dill.load(f)
         except Exception as e:
             LOGGER.info(
                 f"Failed to load dataset from {self.cache_path}. Creating dataset from scratch."
@@ -343,7 +347,9 @@ class BOPDataset:
             pbar = tqdm(self.scene_paths, postfix=f"{self.dataset_name}")
         else:
             pbar = self.scene_paths
-        for scene_path in pbar:
+        for i, scene_path in enumerate(pbar):
+            if i > 1: 
+                continue
             scene_dataset = self._create_scene_dataset(scene_path)
             dataset["raw_img_dataset"].extend(scene_dataset)
         return dataset
@@ -375,46 +381,127 @@ class BOPDataset:
             )
             for model_num in self.model_names
         }
-
-    def generate_graphs(
-        self, simplify_factor: int, img_width: int, img_height: int
-    ) -> None:
-        """
-        Generate the graphs for the current dataset.
-        """
-        if not self.single_object:
-            raise NotImplementedError(
-                "Graphs are only supported for single object datasets"
-            )
-        #        if self.graphs_root.exists():
-        # LOGGER.info("Graphs already exist. Skipping generation.")
-        # return
-        # self.graphs_root.mkdir(parents=True, exist_ok=True)
-        from data_tools.graph_tools.graph import Graph, prepare_mesh
-
-        LOGGER.info("Generating graphs.")
-        dataset = self._dataset["raw_img_dataset"]
-        for entry in tqdm(dataset):
-            cam = entry["cam"]  # np.ndarray
+        for key, model in self.models.items():
+            if not model.has_vertex_normals():
+                self.models[key] = model.compute_vertex_normals()
+        self.pc_models = {
+            key: self.models[key].sample_points_poisson_disk(self.num_points) for key in self.models
+            }
+     
+    def generate_gt_graphs(self, num_points:int, img_width:int, img_height:int, site:bool=False):
+        site = True
+        assert num_points == self.num_points, "num_points must be the same as the number of points used to generate the point clouds"
+        for entry in tqdm(self._dataset["raw_img_dataset"], total=len(self._dataset["raw_img_dataset"])):
+            img_id = entry["img_id"]
+            cam = entry["cam"] 
             annotation = entry["annotation"]
-            obj_id = annotation["obj_id"][0]  # int
-            pose = annotation["pose"][0]  # np.ndarray
-            graph_path = annotation["graph_path"][0]  # str
-            if not Path(graph_path).parent.is_dir():
-                Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
-            model = self.models[obj_id]
-            mesh = prepare_mesh(
-                mesh=model,
-                simplify_factor=simplify_factor,
-                pose=pose,
-                intrinsic_matrix=cam,
-                img_width=img_width,
-                img_height=img_height,
+            obj_ids = annotation["obj_id"]
+            poses = annotation["pose"]
+            graph_paths = annotation["graph_path"]
+            assert len(obj_ids) == len(poses) == len(graph_paths), "obj_ids, poses, and graph_paths must have the same length"
+
+            graph_path = Path(graph_paths[0]).parent / "gt" #/ "graphs"
+            graph_path.mkdir(parents=True, exist_ok=True)
+            graph_path = graph_path / f"gt_graph_{int(img_id):06d}.npy"
+            #models = {obj_id:self.models[obj_id].sample_points_poisson_disk(num_points) for obj_id in obj_ids}
+            pc_models = {obj_id:self.pc_models[obj_id] for obj_id in obj_ids}
+
+            vertices_combined = np.zeros((num_points * len(obj_ids), 3))
+            normals_combined = np.zeros((num_points * len(obj_ids), 3))
+            for idx, (obj_id, pose) in enumerate(zip(obj_ids, poses)):
+                pc = pc_models[obj_id]
+                vertices = np.asarray(pc.points)
+                normals = np.asarray(pc.normals)
+                pose[:3, 3] = pose[:3, 3] / 1000
+                homogenized_pointcloud = np.hstack((vertices/1000, np.ones((vertices.shape[0], 1))))
+                transformed_pointcloud = np.dot(homogenized_pointcloud, pose.T)#[:,:3]
+                transformed_normals = np.dot(normals, pose[:3, :3].T)
+                if site:
+                    transformed_pointcloud = np.dot(transformed_pointcloud, cam.T)
+                    transformed_normals = np.dot(transformed_normals, cam.T)
+                    transformed_pointcloud[:, :2] /= (np.array((img_width, img_height)).reshape(1,2))
+                    #transformed_normals /= np.linalg.norm(transformed_normals, axis=1).reshape(-1,1)
+                    transformed_normals[:, :2] /= (np.array((img_width, img_height)).reshape(1,2))
+
+                vertices_combined[idx * num_points : (idx+1) * num_points, :] = transformed_pointcloud
+                normals_combined[idx * num_points : (idx+1) * num_points, :] = transformed_normals
+            np.save(str(graph_path), (vertices_combined, normals_combined))
+
+    def generate_initial_graphs(self, img_width:int, img_height:int, bbox:str = "visib"):
+        sphere = trimesh.creation.icosphere(radius=0.05, subdivisions=1)
+        edges = sphere.edges
+        vertices = np.asarray(sphere.vertices, dtype=np.float32)
+        num_vertices = vertices.shape[0]
+        for i in tqdm(range(len(self._dataset["raw_img_dataset"]))):
+            graph_paths = self.get_graph_paths(i) #annotation["graph_path"]
+            graph_path = Path(graph_paths[0]).parent / "init"
+            graph_path.mkdir(parents=True, exist_ok=True)
+            img_id = self._dataset["raw_img_dataset"][i]["img_id"]
+            graph_path = graph_path / f"init_graph_{int(img_id):06d}.npy"
+            bbox_objs = self.get_bbox_objs(i)
+            # could be cx cy h w, byt also x y h w (left top)
+            centers = np.array(
+                [
+                    np.asarray([bbox[0] / img_width, bbox[1] / img_height])
+                    for bbox in bbox_objs
+                ]
             )
-            graph = Graph.from_mesh(mesh)
-            graph.remove_unconnected_nodes()
-            graph.save(graph_path)
-        return 0
+            initial_features = np.tile(vertices, (centers.shape[0], 1))
+            centers_adj = np.repeat(centers, vertices.shape[0], axis=0)
+            initial_features[:, :2] += centers_adj
+            initial_features[:, 2] += 0.8
+
+            initial_edges = np.tile(edges, (centers.shape[0], 1))
+            initial_edges[:, 0] += np.repeat(np.arange(centers.shape[0]) * num_vertices, edges.shape[0])
+            initial_edges[:, 1] += np.repeat(np.arange(centers.shape[0]) * num_vertices, edges.shape[0])
+            dtype = [('initial_features', initial_features.dtype, initial_features.shape),
+            ('initial_edges', initial_edges.dtype, initial_edges.shape)]
+            structured_array = np.array([(initial_features, initial_edges)], dtype=dtype)
+            np.save(str(graph_path), structured_array)
+            #np.save(str(graph_path), (initial_features, initial_edges))
+#            pcd = o3d.geometry.PointCloud()
+#            pcd.points = o3d.utility.Vector3dVector(vertices_combined)
+#            pcd.normals = o3d.utility.Vector3dVector(normals_combined)
+#            o3d.visualization.draw_geometries([pcd], point_show_normal=True)
+#            print("graph_path: ", graph_paths)
+    #def generate_graphs( self, simplify_factor: int, img_width: int, img_height: int
+    #) -> None:
+        #"""
+        #Generate the graphs for the current dataset.
+        #"""
+        #if not self.single_object:
+            #raise NotImplementedError(
+                #"Graphs are only supported for single object datasets"
+            #)
+        ##        if self.graphs_root.exists():
+        ## LOGGER.info("Graphs already exist. Skipping generation.")
+        ## return
+        ## self.graphs_root.mkdir(parents=True, exist_ok=True)
+        #from data_tools.graph_tools.graph import Graph, prepare_mesh
+
+        #LOGGER.info("Generating graphs.")
+        #dataset = self._dataset["raw_img_dataset"]
+        #for entry in tqdm(dataset):
+            #cam = entry["cam"]  # np.ndarray
+            #annotation = entry["annotation"]
+            #obj_id = annotation["obj_id"][0]  # int
+            #pose = annotation["pose"][0]  # np.ndarray
+            #graph_path = annotation["graph_path"][0]  # str
+            #if not Path(graph_path).parent.is_dir():
+                #Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+            #model = self.models[obj_id]
+            #mesh = prepare_mesh(
+                #mesh=model,
+                #simplify_factor=simplify_factor,
+                #pose=pose,
+                #intrinsic_matrix=cam,
+                #img_width=img_width,
+                #img_height=img_height,
+            #)
+            #graph = Graph.from_mesh(mesh)
+            #graph.remove_unconnected_nodes()
+            #graph.save(graph_path)
+        #return 0
 
     #    @property
     #    def models(self) -> np.ndarray:
