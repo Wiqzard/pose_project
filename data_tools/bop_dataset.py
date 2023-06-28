@@ -310,9 +310,13 @@ class BOPDataset:
             )
             if not annotations:
                 continue
+            gt_graph_path = scene_root/ 'graphs' / 'gt' / f"gt_graph_{int(str_im_id):06d}.npy"
+            init_graph_path = scene_root/ 'graphs' / 'init' / f"init_graph_{int(str_im_id):06d}.npy"
             raw_img_data = {
                 "scene_id": scene_id,
                 "img_id": int(str_im_id),
+                "gt_graph_path": str(gt_graph_path),
+                "init_graph_path": str(init_graph_path),
                 "cam": K,
                 "depth_factor": depth_scale,
                 "img_type": "real",  # "syn_pbr",
@@ -617,6 +621,15 @@ class BOPDataset:
     @require_dataset
     def get_graph_paths(self, idx: int) -> Graph:
         return self._dataset["raw_img_dataset"][idx]["annotation"]["graph_path"]
+
+    @require_dataset
+    def get_graph_gt_path(self, idx: int) -> Tuple[np.ndarray]:
+        return self._dataset["raw_img_dataset"][idx]["gt_graph_path"]
+
+    @require_dataset
+    def get_graph_init_path(self, idx: int) -> Tuple[np.ndarray]:
+        return self._dataset["raw_img_dataset"][idx]["init_graph_path"]
+        
 
 
 def load_ply(path, vertex_scale=1.0):

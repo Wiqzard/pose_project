@@ -62,13 +62,14 @@ channel_multipliers:
 unpooling_levels:
 - 0
 - 1
+- 2
 n_heads: 4
 d_cond: 768
-lr0: 0.01
-lrf: 0.01
+lr0: 0.001
+lrf: 0.001
 momentum: 0.937
 weight_decay: 0.0005
 warmup_epochs: 0
 warmup_momentum: 0.8
-warmup_bias_lr: 0.1
+warmup_bias_lr: 0.01
 nbs: 64

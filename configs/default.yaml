@@ -35,7 +35,6 @@ save_hybrid: False  # (bool) save hybrid version of labels (labels + additional 
 conf:  # (float, optional) object confidence threshold for detection (default 0.25 predict, 0.001 val)
 half: False  # (bool) use half precision (FP16)
 dnn: False  # (bool) use OpenCV DNN for ONNX inference
-plots: True  # (bool) save plots during train/val
 
 # Prediction settings --------------------------------------------------------------------------------------------------
 source:  # (str, optional) source directory for images or videos
@@ -65,19 +64,19 @@ n_res_blocks: 2
 attention_levels: [0,1, 2,3]
 attention_mode: "gat"
 channel_multipliers: [1, 2, 2, 4, 4, 8]
-unpooling_levels: [0, 1]
+unpooling_levels: [0, 1, 2]
 n_heads: 4
 d_cond: 768 #1024
 
 
 
 # Hyperparameters ------------------------------------------------------------------------------------------------------
-lr0: 0.01  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
-lrf: 0.01  # (float) final learning rate (lr0 * lrf)
+lr0: 0.001  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
+lrf: 0.001  # (float) final learning rate (lr0 * lrf)
 momentum: 0.937  # (float) SGD momentum/Adam beta1
 weight_decay: 0.0005  # (float) optimizer weight decay 5e-4
 warmup_epochs: 0 #3.0  # (float) warmup epochs (fractions ok)
 warmup_momentum: 0.8  # (float) warmup initial momentum
-warmup_bias_lr: 0.1  # (float) warmup initial bias lr
+warmup_bias_lr: 0.001  # (float) warmup initial bias lr
 nbs: 64  # (int) nominal batch size
 #augs

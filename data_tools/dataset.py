@@ -19,6 +19,33 @@ class DatasetLM(Dataset):
     def __len__(self) -> int:
         return len(self.dataset)
 
+    def __getitem__(self, index): 
+        # retrieve image
+        img_path = self.dataset.get_img_path(index)
+        img = cv2.imread(str(img_path))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.resize(img, (224, 224))
+        img = torch.from_numpy(img).float().permute(2, 0, 1)
+
+        init_graph = np.load(self.dataset.get_graph_init_path(index))
+        init_features = init_graph["initial_features"]
+        init_edge_index = init_graph["initial_edges"]
+        init_features = torch.from_numpy(init_features).float().squeeze(0)
+        init_edge_index = torch.from_numpy(init_edge_index).long().squeeze().T
+        gt_graph = np.load(self.dataset.get_graph_gt_path(index))
+        gt_features = gt_graph[0]
+        gt_normals = gt_graph[1]
+        gt_features = torch.from_numpy(gt_features).float()
+        gt_normals = torch.from_numpy(gt_normals).float()
+
+        return img, init_features, init_edge_index, gt_features,gt_normals 
+        
+
+
+        
+        
+
+
         
 
 

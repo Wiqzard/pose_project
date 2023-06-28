@@ -14,6 +14,34 @@ import torch
 import timm
 from gat_inf import SpatialTransformer, GraphNet, AttentionMode
 
+points = np.load("/home/bmw/Documents/Sebastian/pose_project/pred.npy")#[0]
+#points = np.load("/home/bmw/Documents/Sebastian/pose_project/init.npy")
+#pcd = o3d.geometry.PointCloud()
+#pcd.points = o3d.utility.Vector3dVector(points)
+#o3d.visualization.draw_geometries([pcd])
+pred_edges = np.load("/home/bmw/Documents/Sebastian/pose_project/pred_edges.npy")#[0]
+gt_points = np.load("/home/bmw/Documents/Sebastian/pose_project/gt.npy")#[0]
+gt_normals = torch.from_numpy(gt_points[1]).squeeze()
+gt_points = torch.from_numpy(gt_points[0]).squeeze()
+
+pred_points = torch.from_numpy(points[0]).squeeze()
+
+
+
+
+dataset = BOPDataset(
+    "/home/bmw/Documents/limemod/lm",#home/bmw/Documents/limemod/lm",
+    Mode.TRAIN,
+    use_cache=True,
+    single_object=False,
+    num_points=5082,
+)
+from data_tools.dataset import DatasetLM
+
+dataset = DatasetLM(dataset)
+a = dataset[0]
+
+a = dataset.get_graph_gt_path(378)
 a = np.load('/home/bmw/Documents/limemod/lm/train_pbr/000037/graphs/init/init_graph_000000.npy')
 features = a["initial_features"][0]
 edge_index = a["initial_edges"][0]
@@ -63,13 +91,6 @@ pool_edge_index, pool_features = edge_based_unpooling(pool_edge_index, pool_feat
 
 pool_edge_index, pool_features = edge_based_unpooling(edge_index, features)
 
-dataset = BOPDataset(
-    "/home/bmw/Documents/limemod/lm",#home/bmw/Documents/limemod/lm",
-    Mode.TRAIN,
-    use_cache=True,
-    single_object=False,
-    num_points=5082,
-)
 dataset.generate_initial_graphs(img_height=480, img_width=640)
 dataset.generate_gt_graphs(num_points=5082, img_height=480, img_width=640, site=True)
 

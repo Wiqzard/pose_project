@@ -4,7 +4,7 @@ from typing import Union
 from copy import copy, deepcopy
 
 import timm
-
+import numpy as np
 from utils import LOGGER
 from utils.torch_utils import (
     torch_distributed_zero_first,
@@ -17,6 +17,7 @@ from utils import colorstr
 from data_tools.graph_tools.graph import Graph
 from data_tools.bop_dataset import BOPDataset
 from data_tools.dummy_dataset import DummyDataset
+from data_tools.dataset import DatasetLM
 from utils.flags import Mode
 #import hiera
 from models.backbones.hiera import hiera_base_224
@@ -28,6 +29,7 @@ from exp.mpose.mpose_validator import MposeValidator
 from pytorch3d.loss import chamfer_distance
 import torch
 from torch.nn import functional as F
+
 
 def compute_edge_lengths(feature_matrix, edge_index):
     """
@@ -81,14 +83,16 @@ class MposeTrainer(BaseTrainer):
         if mode == Mode.TRAIN:
             if not self.trainset:
                 dataset = self.get_dataset(dataset_path, mode=Mode.TRAIN, use_cache=True, single_object=False)
-                dataset = DummyDataset(bop_dataset=dataset)
+                dataset = DatasetLM(bop_dataset=dataset)
+                #dataset = DummyDataset(bop_dataset=dataset)
                 self.trainset = dataset
             else:
                 dataset = self.trainset
         elif mode == Mode.TEST:
             if not self.testset:
                 dataset = self.get_dataset(dataset_path, mode=Mode.TEST, use_cache=True, single_object=False)
-                dataset = DummyDataset(bop_dataset=dataset)
+                dataset = DatasetLM(bop_dataset=dataset)
+                #dataset = DummyDataset(bop_dataset=dataset)
                 self.testset = dataset
             else:
                 dataset = self.testset
@@ -161,14 +165,21 @@ class MposeTrainer(BaseTrainer):
         #com = (pred[0].mean(dim=0) - target[3].mean(dim=0))**2
         #MSE
         #edge_length_loss = edge_loss(feature_matrix1=pred[0], edge_index1=pred[1], feature_matrix2=target[3], edge_index2=target[4])
-        split_pred = pred[0].view(pred[0].shape[0]//64, -1, 3)
-        split_target = target[3].view(target[3].shape[0]//64, -1, 3)
+       # split_pred = pred[0].view(pred[0].shape[0]//64, -1, 3)
+       # split_target = target[3].view(target[3].shape[0]//64, -1, 3)
         #com_loss = torch.mean((split_pred.mean(dim=1) - split_target.mean(dim=1))**2, dim=1)/split_pred.shape[0] # / 64 
       #  if com_loss.sum() > 1000:
       #      print(split_pred.mean(dim=1))
       #      print(split_target.mean(dim=1))
        #     com_loss = torch.zeros_like(com_loss).to(com_loss.device)# tensor([0])
-        loss_chamfer = chamfer_distance(split_pred, split_target)[0]# / 100000
+        pred_features = pred[0].unsqueeze(0)
+
+#            pcd.points = o3d.utility.Vector3dVector(vertices_combined)
+#            pcd.normals = o3d.utility.Vector3dVector(normals_combined)
+#            o3d.visualization.draw_geometries([pcd], point_show_normal=True)
+        target_features = target[3].unsqueeze(0)
+        loss_chamfer = chamfer_distance(pred_features, target_features)[0]# / 100000
+        #loss_chamfer = chamfer_distance(split_pred, split_target)[0]# / 100000
         loss =  loss_chamfer #com_loss#+ edge_length_loss
         #loss_chamfer = chamfer_distance(pred[0].unsqueeze(0), target[3].unsqueeze(0))[0]
         #loss = loss_chamfer #com #torch.mean((pred[0] - target[3]) ** 2) 
@@ -176,18 +187,22 @@ class MposeTrainer(BaseTrainer):
 
         
     def plot_training_samples(self, batch, preds, ni):
-        init_feats = batch[1].squeeze(0).cpu().numpy()
-        init_edges = batch[2].squeeze(0).cpu().numpy().T
-        init_graph = Graph(feature_matrix=init_feats, edge_index_list=init_edges)
-        init_graph.visualize("init_graph.png")
-        gt_feats = batch[3].squeeze(0).cpu().numpy()
-        gt_edges = batch[4].squeeze(0).cpu().numpy().T
-        gt_graph = Graph(feature_matrix=gt_feats, edge_index_list=gt_edges)
-        gt_graph.visualize("gt_graph.png")
-        pred_feats = preds[0].squeeze(0).detach().cpu().numpy()
-        pred_edges = preds[1].squeeze(0).detach().cpu().numpy().T
-        pred_graph = Graph(feature_matrix=pred_feats, edge_index_list=pred_edges)
-        pred_graph.visualize("pred_graph.png")
+        init_feats = batch[1].squeeze().cpu().numpy()
+        init_edges = batch[2].squeeze().cpu().numpy()
+        np.save("init.npy", init_feats)
+        gt_feats = batch[3].squeeze().cpu().numpy()
+        gt_normals = batch[4].squeeze().cpu().numpy()
+        np.save("gt.npy", (gt_feats, gt_normals))
+        pred_feats = preds[0].squeeze().detach().cpu().numpy()
+        pred_edges = preds[1].squeeze().detach().cpu().numpy().T
+        np.save("pred.npy", pred_feats)
+        np.save("pred_edges.npy", pred_edges)
+      #  gt_graph = Graph(feature_matrix=gt_feats, edge_index_list=gt_edges)
+      #  gt_graph.visualize("gt_graph.png")
+      #  pred_feats = preds[0].squeeze(0).detach().cpu().numpy()
+      #  pred_edges = preds[1].squeeze(0).detach().cpu().numpy().T
+      #  pred_graph = Graph(feature_matrix=pred_feats, edge_index_list=pred_edges)
+      #  pred_graph.visualize("pred_graph.png")
         
     
     def progress_string(self) -> str:
