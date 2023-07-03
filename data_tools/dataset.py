@@ -6,48 +6,107 @@ import cv2
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
+from PIL import Image
+import timm
 
 from data_tools.bop_dataset import BOPDataset, DatasetType
 from data_tools.graph_tools.graph import Graph
 from utils.bbox import Bbox
 
+from pytorch3d.structures import Meshes
+
+
 class DatasetLM(Dataset):
-    def __init__(self, bop_dataset: BOPDataset, cfg=None) -> None:
+    def __init__(self, bop_dataset: BOPDataset, cfg=None, transforms=None) -> None:
         super().__init__()
+        self.transforms = transforms
         self.dataset = bop_dataset
-    
+
     def __len__(self) -> int:
         return len(self.dataset)
 
-    def __getitem__(self, index): 
-        # retrieve image
+    def faces_to_edges(self, num_verts, faces):
+        edges1 = faces[:, [0, 1]]
+        edges2 = faces[:, [1, 2]]
+        edges3 = faces[:, [2, 0]]
+        edges = torch.cat([edges1, edges2, edges3], dim=0)
+        edges, _ = edges.sort(dim=1)
+        edges_hash = num_verts * edges[:, 0] + edges[:, 1]
+        u, inverse_idxs = torch.unique(edges_hash, return_inverse=True)
+        F = faces.shape[0]
+        faces_edge_rep = inverse_idxs.reshape(3, F).t()
+        edges = torch.stack([u // num_verts, u % num_verts], dim=1)
+        return edges, faces_edge_rep
+
+    def __getitem__(self, index):
         img_path = self.dataset.get_img_path(index)
         img = cv2.imread(str(img_path))
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (224, 224))
-        img = torch.from_numpy(img).float().permute(2, 0, 1)
-
-        init_graph = np.load(self.dataset.get_graph_init_path(index))
-        init_features = init_graph["initial_features"]
-        init_edge_index = init_graph["initial_edges"]
-        init_features = torch.from_numpy(init_features).float().squeeze(0)
-        init_edge_index = torch.from_numpy(init_edge_index).long().squeeze().T
-        gt_graph = np.load(self.dataset.get_graph_gt_path(index))
-        gt_features = gt_graph[0]
-        gt_normals = gt_graph[1]
-        gt_features = torch.from_numpy(gt_features).float()
-        gt_normals = torch.from_numpy(gt_normals).float()
-
-        return img, init_features, init_edge_index, gt_features,gt_normals 
+        if self.transforms is not None:
+            img = Image.fromarray(img)  # cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            img = self.transforms(img)
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.resize(img, (224, 224))
+            img = torch.from_numpy(img).float().permute(2, 0, 1)
+        init_mesh= np.load(self.dataset.get_graph_init_path(index))
+        init_features = init_mesh["initial_features"]
+        init_faces = init_mesh["initial_faces"]
+        init_edges = init_mesh["initial_edges"]
         
+        verts_padded = torch.from_numpy(init_features).squeeze(0).float()
+        faces_packed = torch.from_numpy(init_faces).squeeze(0).long()
+        edges_packed = torch.from_numpy(init_edges).squeeze(0).long().T
+        #edges_packed, _ = self.faces_to_edges(faces_packed)
+        # init_mesh = Meshes(verts=verts_bs, faces=faces_bs)
+
+        gt_mesh = np.load(self.dataset.get_graph_gt_path(index))
+        gt_features = torch.from_numpy(gt_mesh["gt_features"]).float()
+        gt_normals = torch.from_numpy(gt_mesh["gt_normals"]).float()
+        return {
+            "img": img,
+            "init_features": verts_padded,
+            "init_faces": faces_packed,
+            "init_edges": edges_packed,
+            "gt_features": gt_features,
+            "gt_normals": gt_normals,
+        }
+        # return {"img": img, "init_mesh": init_mesh, "gt_features": gt_features, "gt_normals": gt_normals}
+
+    # print(mesh.verts_padded().shape)
 
 
-        
-        
-
-
-        
-
+#    def __getitem__(self, index):
+#        # retrieve image
+#        img_path = self.dataset.get_img_path(index)
+#        img = cv2.imread(str(img_path))
+#        if self.transforms is not None:
+#            img = Image.fromarray(img)  # cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+#            img = self.transforms(img)
+#        else:
+#            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#            img = cv2.resize(img, (224, 224))
+#            img = torch.from_numpy(img).float().permute(2, 0, 1)
+#
+#        init_graph = np.load(self.dataset.get_graph_init_path(index))
+#        init_features = init_graph["initial_features"]
+#        init_faces = torch.from_numpy(init_graph["initial_faces"]).long()
+#        init_edge_index = init_graph["initial_edges"]
+#        init_features = torch.from_numpy(init_features).float().squeeze(0)
+#        init_edge_index = torch.from_numpy(init_edge_index).long().squeeze().T
+#        gt_graph = np.load(self.dataset.get_graph_gt_path(index))
+#        gt_features = gt_graph[0]
+#        gt_normals = gt_graph[1]
+#        gt_features = torch.from_numpy(gt_features).float()
+#        gt_normals = torch.from_numpy(gt_normals).float()
+#
+#        return {
+#            "img": img,
+#            "init_features": init_features,
+#            "init_edge_index": init_edge_index,
+#            "init_faces": init_faces,
+#            "gt_features": gt_features,
+#            "gt_normals": gt_normals,
+#        }
 
 
 class LMDataset(Dataset):
@@ -80,7 +139,15 @@ class LMDataset(Dataset):
         x = torch.from_numpy(graph.feature_matrix).float().T
         edge_index = torch.from_numpy(graph.edge_index).long().T
         adj_matrix = torch.from_numpy(graph.adjacency_matrix).float()
-        out = {"img":img, "obj_id":obj_id, "cam":cam, "pose":pose, "x":x, "edge_index":edge_index, "adj_matrix":adj_matrix}
+        out = {
+            "img": img,
+            "obj_id": obj_id,
+            "cam": cam,
+            "pose": pose,
+            "x": x,
+            "edge_index": edge_index,
+            "adj_matrix": adj_matrix,
+        }
         return out
 
     def get_img(self, idx: int) -> np.ndarray:
@@ -236,7 +303,7 @@ class LMDataset(Dataset):
         Returns:
             Graph: The graph for the image.
         """
-        #path = Path(self.dataset.get_graph_paths(idx)[0])
-        #print(path.exists())
+        # path = Path(self.dataset.get_graph_paths(idx)[0])
+        # print(path.exists())
         graph = Graph.load(self.dataset.get_graph_paths(idx)[0])
         return graph

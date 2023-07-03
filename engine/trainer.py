@@ -37,6 +37,7 @@ class BaseTrainer:
         self.model = None
         self.metrics = None
         
+        self.i = 0
         
 
         # Dirs
@@ -157,7 +158,7 @@ class BaseTrainer:
         # Model
         self.run_callbacks("on_pretrain_routine_start")
         ckpt = self.setup_model()
-        self.model = self.model.to(self.device)
+        self.model.to(self.device)
         self.set_model_attributes()
 #        # Check AMP
 #        self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
@@ -296,7 +297,8 @@ class BaseTrainer:
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-                    preds = self.model(x=batch[1], edge_index=batch[2], cond=batch[0])
+                    preds = self.model(batch)
+                    preds = self.postprocess_batch(preds, batch)
                     self.loss, self.loss_items = self.criterion(preds, batch)
                     if RANK != -1:
                         self.loss *= world_size
@@ -445,8 +447,8 @@ class BaseTrainer:
         else:
             cfg = self.args #model
         self.model = self.get_model(
-            cfg=cfg, weights=weights, verbose=RANK == -1
-        )  # calls Model(cfg, weights)
+             weights=weights, verbose=RANK == -1
+        ) 
         return ckpt
 
     def optimizer_step(self):
@@ -466,6 +468,12 @@ class BaseTrainer:
         Allows custom preprocessing model inputs and ground truths depending on task type.
         """
         return batch
+
+    def postprocess_batch(self, pred, batch):
+        """
+        Allows custom postprocessing of model outputs and ground truths depending on task type.
+        """
+        pass
 
     def validate(self):
         """
@@ -513,7 +521,8 @@ class BaseTrainer:
         """
         To set or update model parameters before training.
         """
-        self.model.names = self.args.names
+        #self.model.names = self.args.names
+        self.model.cfg = self.args
 
     def build_targets(self, preds, targets):
         """Builds target tensors for training YOLO model."""

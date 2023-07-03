@@ -15,10 +15,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from data_tools.graph_tools.graph import Graph
+from data_tools.input_shapes import _ico_verts0, _ico_faces0, _ico_edges0
 
 from utils import LOGGER, RANK
 from utils.flags import Mode
-
+from pytorch3d.structures import Meshes, join_meshes_as_batch
+from pytorch3d.ops import sample_points_from_meshes
 
 class DatasetType(enum.Enum):
     BOP = enum.auto()
@@ -90,8 +92,8 @@ class BOPDataset:
         if self.mode == Mode.TRAIN:
             self.split_path = self._path / "train_pbr"
             self.models_root = self._path / "models"
-#        elif self.mode == Mode.VAL:
-#            raise ValueError("Validation set not implemented yet.")
+        #        elif self.mode == Mode.VAL:
+        #            raise ValueError("Validation set not implemented yet.")
         elif self.mode == Mode.TEST:
             self.split_path = self._path / "test"
             self.models_root = self._path / "models_eval"
@@ -271,6 +273,8 @@ class BOPDataset:
         if (
             np.sum(annotations["bbox_obj"][0]) == 0
             or np.sum(annotations["bbox_visib"][0]) == 0
+            or np.any(np.array(annotations["bbox_visib"]) < 0)
+            or np.any(np.array(annotations["bbox_obj"]) <0)
         ):
             return None
         return annotations
@@ -310,8 +314,12 @@ class BOPDataset:
             )
             if not annotations:
                 continue
-            gt_graph_path = scene_root/ 'graphs' / 'gt' / f"gt_graph_{int(str_im_id):06d}.npy"
-            init_graph_path = scene_root/ 'graphs' / 'init' / f"init_graph_{int(str_im_id):06d}.npy"
+            gt_graph_path = (
+                scene_root / "graphs" / "gt" / f"gt_graph_{int(str_im_id):06d}.npy"
+            )
+            init_graph_path = (
+                scene_root / "graphs" / "init" / f"init_graph_{int(str_im_id):06d}.npy"
+            )
             raw_img_data = {
                 "scene_id": scene_id,
                 "img_id": int(str_im_id),
@@ -352,7 +360,7 @@ class BOPDataset:
         else:
             pbar = self.scene_paths
         for i, scene_path in enumerate(pbar):
-            if i > 1: 
+            if i > 1:
                 continue
             scene_dataset = self._create_scene_dataset(scene_path)
             dataset["raw_img_dataset"].extend(scene_dataset)
@@ -389,26 +397,36 @@ class BOPDataset:
             if not model.has_vertex_normals():
                 self.models[key] = model.compute_vertex_normals()
         self.pc_models = {
-            key: self.models[key].sample_points_poisson_disk(self.num_points) for key in self.models
-            }
-     
-    def generate_gt_graphs(self, num_points:int, img_width:int, img_height:int, site:bool=False):
+            key: self.models[key].sample_points_poisson_disk(self.num_points)
+            for key in self.models
+        }
+
+    def generate_gt_graphs(
+        self, num_points: int, img_width: int, img_height: int, site: bool = False
+    ):
         site = True
-        assert num_points == self.num_points, "num_points must be the same as the number of points used to generate the point clouds"
-        for entry in tqdm(self._dataset["raw_img_dataset"], total=len(self._dataset["raw_img_dataset"])):
+        assert (
+            num_points == self.num_points
+        ), "num_points must be the same as the number of points used to generate the point clouds"
+        for entry in tqdm(
+            self._dataset["raw_img_dataset"],
+            total=len(self._dataset["raw_img_dataset"]),
+        ):
             img_id = entry["img_id"]
-            cam = entry["cam"] 
+            cam = entry["cam"]
             annotation = entry["annotation"]
             obj_ids = annotation["obj_id"]
             poses = annotation["pose"]
             graph_paths = annotation["graph_path"]
-            assert len(obj_ids) == len(poses) == len(graph_paths), "obj_ids, poses, and graph_paths must have the same length"
+            assert (
+                len(obj_ids) == len(poses) == len(graph_paths)
+            ), "obj_ids, poses, and graph_paths must have the same length"
 
-            graph_path = Path(graph_paths[0]).parent / "gt" #/ "graphs"
+            graph_path = Path(graph_paths[0]).parent / "gt"  # / "graphs"
             graph_path.mkdir(parents=True, exist_ok=True)
             graph_path = graph_path / f"gt_graph_{int(img_id):06d}.npy"
-            #models = {obj_id:self.models[obj_id].sample_points_poisson_disk(num_points) for obj_id in obj_ids}
-            pc_models = {obj_id:self.pc_models[obj_id] for obj_id in obj_ids}
+            # models = {obj_id:self.models[obj_id].sample_points_poisson_disk(num_points) for obj_id in obj_ids}
+            pc_models = {obj_id: self.pc_models[obj_id] for obj_id in obj_ids}
 
             vertices_combined = np.zeros((num_points * len(obj_ids), 3))
             normals_combined = np.zeros((num_points * len(obj_ids), 3))
@@ -417,27 +435,45 @@ class BOPDataset:
                 vertices = np.asarray(pc.points)
                 normals = np.asarray(pc.normals)
                 pose[:3, 3] = pose[:3, 3] / 1000
-                homogenized_pointcloud = np.hstack((vertices/1000, np.ones((vertices.shape[0], 1))))
-                transformed_pointcloud = np.dot(homogenized_pointcloud, pose.T)#[:,:3]
+                homogenized_pointcloud = np.hstack(
+                    (vertices / 1000, np.ones((vertices.shape[0], 1)))
+                )
+                transformed_pointcloud = np.dot(
+                    homogenized_pointcloud, pose.T
+                )  # [:,:3]
                 transformed_normals = np.dot(normals, pose[:3, :3].T)
                 if site:
                     transformed_pointcloud = np.dot(transformed_pointcloud, cam.T)
                     transformed_normals = np.dot(transformed_normals, cam.T)
-                    transformed_pointcloud[:, :2] /= (np.array((img_width, img_height)).reshape(1,2))
-                    #transformed_normals /= np.linalg.norm(transformed_normals, axis=1).reshape(-1,1)
-                    transformed_normals[:, :2] /= (np.array((img_width, img_height)).reshape(1,2))
+                    transformed_pointcloud[:, :2] /= np.array(
+                        (img_width, img_height)
+                    ).reshape(1, 2)
+                    # transformed_normals /= np.linalg.norm(transformed_normals, axis=1).reshape(-1,1)
+                    transformed_normals[:, :2] /= np.array(
+                        (img_width, img_height)
+                    ).reshape(1, 2)
+                    transformed_normals = transformed_normals / np.linalg.norm(
+                        transformed_normals, axis=1 
+                        )
 
-                vertices_combined[idx * num_points : (idx+1) * num_points, :] = transformed_pointcloud
-                normals_combined[idx * num_points : (idx+1) * num_points, :] = transformed_normals
+                vertices_combined[
+                    idx * num_points : (idx + 1) * num_points, :
+                ] = transformed_pointcloud
+                normals_combined[
+                    idx * num_points : (idx + 1) * num_points, :
+                ] = transformed_normals
             np.save(str(graph_path), (vertices_combined, normals_combined))
 
-    def generate_initial_graphs(self, img_width:int, img_height:int, bbox:str = "visib"):
-        sphere = trimesh.creation.icosphere(radius=0.05, subdivisions=1)
-        edges = sphere.edges
-        vertices = np.asarray(sphere.vertices, dtype=np.float32)
+    def generate_initial_graphs(
+        self, img_width: int, img_height: int, bbox: str = "visib"
+    ):
+        vertices = np.asarray(_ico_verts0 , dtype=np.float32)* 0.05
+        edges = np.asarray(_ico_edges0, dtype=np.int32)
+        faces = np.asarray(_ico_faces0, dtype=np.int32)
         num_vertices = vertices.shape[0]
+
         for i in tqdm(range(len(self._dataset["raw_img_dataset"]))):
-            graph_paths = self.get_graph_paths(i) #annotation["graph_path"]
+            graph_paths = self.get_graph_paths(i)  # annotation["graph_path"]
             graph_path = Path(graph_paths[0]).parent / "init"
             graph_path.mkdir(parents=True, exist_ok=True)
             img_id = self._dataset["raw_img_dataset"][i]["img_id"]
@@ -455,85 +491,128 @@ class BOPDataset:
             initial_features[:, :2] += centers_adj
             initial_features[:, 2] += 0.8
 
+
             initial_edges = np.tile(edges, (centers.shape[0], 1))
-            initial_edges[:, 0] += np.repeat(np.arange(centers.shape[0]) * num_vertices, edges.shape[0])
-            initial_edges[:, 1] += np.repeat(np.arange(centers.shape[0]) * num_vertices, edges.shape[0])
-            dtype = [('initial_features', initial_features.dtype, initial_features.shape),
-            ('initial_edges', initial_edges.dtype, initial_edges.shape)]
-            structured_array = np.array([(initial_features, initial_edges)], dtype=dtype)
+            initial_edges[:, 0] += np.repeat(
+                np.arange(centers.shape[0]) * num_vertices, edges.shape[0]
+            )
+            initial_edges[:, 1] += np.repeat(
+                np.arange(centers.shape[0]) * num_vertices, edges.shape[0]
+            )
+            initial_faces = np.tile(faces, (centers.shape[0], 1))
+            initial_faces[:, 0] += np.repeat(
+                np.arange(centers.shape[0]) * num_vertices, faces.shape[0]
+            )
+            initial_faces[:, 1] += np.repeat(
+                np.arange(centers.shape[0]) * num_vertices, faces.shape[0]
+            )
+            initial_faces[:, 2] += np.repeat(
+                np.arange(centers.shape[0]) * num_vertices, faces.shape[0]
+            )
+            dtype = [
+                ("initial_features", initial_features.dtype, initial_features.shape),
+                ("initial_faces", initial_faces.dtype, initial_faces.shape),
+                ("initial_edges", initial_edges.dtype, initial_edges.shape),
+
+            ]
+            structured_array = np.array(
+                [(initial_features, initial_faces, initial_edges)], dtype=dtype
+            )
             np.save(str(graph_path), structured_array)
-            #np.save(str(graph_path), (initial_features, initial_edges))
-#            pcd = o3d.geometry.PointCloud()
-#            pcd.points = o3d.utility.Vector3dVector(vertices_combined)
-#            pcd.normals = o3d.utility.Vector3dVector(normals_combined)
-#            o3d.visualization.draw_geometries([pcd], point_show_normal=True)
-#            print("graph_path: ", graph_paths)
-    #def generate_graphs( self, simplify_factor: int, img_width: int, img_height: int
-    #) -> None:
-        #"""
-        #Generate the graphs for the current dataset.
-        #"""
-        #if not self.single_object:
-            #raise NotImplementedError(
-                #"Graphs are only supported for single object datasets"
-            #)
-        ##        if self.graphs_root.exists():
-        ## LOGGER.info("Graphs already exist. Skipping generation.")
-        ## return
-        ## self.graphs_root.mkdir(parents=True, exist_ok=True)
-        #from data_tools.graph_tools.graph import Graph, prepare_mesh
 
-        #LOGGER.info("Generating graphs.")
-        #dataset = self._dataset["raw_img_dataset"]
-        #for entry in tqdm(dataset):
-            #cam = entry["cam"]  # np.ndarray
-            #annotation = entry["annotation"]
-            #obj_id = annotation["obj_id"][0]  # int
-            #pose = annotation["pose"][0]  # np.ndarray
-            #graph_path = annotation["graph_path"][0]  # str
-            #if not Path(graph_path).parent.is_dir():
-                #Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
-            #model = self.models[obj_id]
-            #mesh = prepare_mesh(
-                #mesh=model,
-                #simplify_factor=simplify_factor,
-                #pose=pose,
-                #intrinsic_matrix=cam,
-                #img_width=img_width,
-                #img_height=img_height,
-            #)
-            #graph = Graph.from_mesh(mesh)
-            #graph.remove_unconnected_nodes()
-            #graph.save(graph_path)
-        #return 0
+    def generate_initial_meshes(
+        self, img_width: int, img_height: int, bbox: str = "visib"
+    ):
+        vertices = np.asarray(_ico_verts0 , dtype=np.float32)* 0.05
+        faces = np.asarray(_ico_faces0, dtype=np.int32)
 
-    #    @property
-    #    def models(self) -> np.ndarray:
-    #        """
-    #        Load the models for the current dataset.
-    #
-    #        Returns:
-    #            A list of dictionaries, each containing information about a single model in the dataset.
-    #        """
-    #        cache_path = self.models_root / f"models_{self.dataset_name}.pkl"
-    #        if self._models is not None:
-    #            return self._models
-    #        if cache_path.exists() and self.use_cache:
-    #            with open(cache_path, "rb") as f:
-    #                self._models = pickle.load(f)
-    #            return self._models
-    #        models = []
-    #        for model_num in self.model_names:
-    #            model = load_ply(
-    #                self.models_root / f"obj_{model_num}.ply",
-    #                vertex_scale=self.scale_to_meter,
-    #            )
-    #            models.append(model)
-    #        LOGGER.info(f"cache models to {cache_path}")
-    #        with open(cache_path, "wb+") as f:
-    #            pickle.dump(models, f)
-    #        self._models = models
-    #        return models
+        for i in tqdm(range(len(self._dataset["raw_img_dataset"]))):
+            graph_paths = self.get_graph_paths(i)  # annotation["graph_path"]
+            graph_path = Path(graph_paths[0]).parent / "init"
+            graph_path.mkdir(parents=True, exist_ok=True)
+            img_id = self._dataset["raw_img_dataset"][i]["img_id"]
+            graph_path = graph_path / f"init_graph_{int(img_id):06d}.npy"
+            bbox_objs = self.get_bbox_objs(i)
+            # could be cx cy h w, byt also x y h w (left top)
+            centers = np.array(
+                [
+                    np.asarray([bbox[0] / img_width, bbox[1] / img_height])
+                    for bbox in bbox_objs
+                ]
+            )
+            initial_features = np.repeat(vertices[None,...], centers.shape[0], axis=0)
+            centers_adj = np.repeat(centers[:, None,:], vertices.shape[0], axis=1)
+            initial_features[..., :2] += centers_adj
+            initial_features[..., 2] += 0.8
+
+            initial_faces = np.repeat(faces[None,...], centers.shape[0], axis=0)
+            mesh = Meshes(verts=torch.from_numpy(initial_features), faces=torch.from_numpy(initial_faces))
+            initial_faces = mesh.faces_packed().numpy()
+            initial_edges = mesh.edges_packed().numpy()
+
+            dtype= [
+                ("initial_features", initial_features.dtype, initial_features.shape,),
+                ("initial_faces", initial_faces.dtype, initial_faces.shape,),
+                ("initial_edges", initial_edges.dtype, initial_edges.shape,)]
+            structured_array = np.array(
+                [(initial_features, initial_faces, initial_edges)], dtype=dtype)
+            np.save(str(graph_path), structured_array)
+            
+    def generate_gt_meshes(
+        self, num_points: int, img_width: int, img_height: int, site: bool = False
+    ):
+        # transform full graph, make to mesh, calculate normals, sample, save
+        site = True
+        assert (
+            num_points == self.num_points
+        ), "num_points must be the same as the number of points used to generate the point clouds"
+        for entry in tqdm(
+            self._dataset["raw_img_dataset"],
+            total=len(self._dataset["raw_img_dataset"]),
+        ):
+            img_id = entry["img_id"]
+            cam = entry["cam"]
+            annotation = entry["annotation"]
+            obj_ids = annotation["obj_id"]
+            poses = annotation["pose"]
+            graph_paths = annotation["graph_path"]
+            assert (
+                len(obj_ids) == len(poses) == len(graph_paths)
+            ), "obj_ids, poses, and graph_paths must have the same length"
+
+            graph_path = Path(graph_paths[0]).parent / "gt"  # / "graphs"
+            graph_path.mkdir(parents=True, exist_ok=True)
+            graph_path = graph_path / f"gt_graph_{int(img_id):06d}.npy"
+            meshes = []
+            for idx, (obj_id, pose) in enumerate(zip(obj_ids, poses)):
+                model = self.models[obj_id]
+                vertices = np.asarray(model.vertices)
+                faces = np.asarray(model.triangles)
+                pose[:3, 3] = pose[:3, 3] / 1000
+                homogenized_pointcloud = np.hstack(
+                    (vertices / 1000, np.ones((vertices.shape[0], 1)))
+                )
+                transformed_pointcloud = np.dot(
+                    homogenized_pointcloud, pose.T
+                )  # [:,:3]
+                if site:
+                    transformed_pointcloud = np.dot(transformed_pointcloud, cam.T)
+                    transformed_pointcloud[:, :2] /= np.array(
+                        (img_width, img_height)
+                    ).reshape(1, 2)
+                
+                meshes.append( Meshes(verts=[torch.from_numpy(transformed_pointcloud).float()], faces=[torch.from_numpy(faces).long()]))
+            meshes_combined = join_meshes_as_batch(meshes) 
+            verts_sampled, normals_sampled = sample_points_from_meshes(meshes_combined, num_points, return_normals=True)
+            verts_sampled, normals_sampled = verts_sampled.numpy(), normals_sampled.numpy()
+            dtype = [
+                ("gt_features", verts_sampled.dtype, verts_sampled.shape,),
+                ("gt_normals", normals_sampled.dtype, normals_sampled.shape,),
+            ]
+            structured_array = np.array(
+                [(verts_sampled, normals_sampled)], dtype=dtype
+            )
+            np.save(str(graph_path), structured_array)
 
     @property
     def extents(self) -> np.ndarray:
@@ -559,6 +638,8 @@ class BOPDataset:
     @require_dataset
     def __len__(self):
         return len(self._dataset["raw_img_dataset"])
+
+    
 
     @require_dataset
     def get_obj_ids(self, idx: int) -> List[int]:
@@ -629,7 +710,6 @@ class BOPDataset:
     @require_dataset
     def get_graph_init_path(self, idx: int) -> Tuple[np.ndarray]:
         return self._dataset["raw_img_dataset"][idx]["init_graph_path"]
-        
 
 
 def load_ply(path, vertex_scale=1.0):

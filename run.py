@@ -4,10 +4,15 @@ from utils.cfg_utils import get_cfg
 
 from engine.trainer import BaseTrainer
 from exp.mpose.mpose_trainer import MposeTrainer
+from exp.hiera.hiera_trainer import HIERATrainer
 
 def main() -> int:
     #trainer = BaseTrainer()
-    trainer = MposeTrainer()
+    #trainer = MposeTrainer()
+    #trainer.train()
+
+    cfg = get_cfg("/home/bmw/Documents/Sebastian/pose_project/configs/direct_method.yaml")
+    trainer = HIERATrainer(cfg) 
     trainer.train()
     #print(DEFAULT_CFG)
     

@@ -28,6 +28,7 @@ from torch_geometric.utils import (
 )
 from torch_geometric.utils.sparse import set_sparse_value
 from models.custom_layers import GeGLU, LearnedPositionalEmbeddings, GraphResNetBlock
+from subdivision import SubdivideMeshes
 
 class AttentionMode(Enum):
     """
@@ -48,14 +49,19 @@ class TimestepEmbedSequential(nn.Sequential):
         super().__init__(*args)
         self.layer_names = [layer[1].__class__.__name__ for layer in self._modules.items()]
 
-    def forward(self, x, edge_index, t_emb, cond=None):
+    def forward(self, x, faces, edge_index, t_emb, cond=None):
         for layer in self:
+            bs, n, c = x.shape
             if isinstance(layer, GraphResNetBlock):
+                x = x.reshape(-1, x.shape[-1])
                 x = layer(x=x, edge_index=edge_index, t_emb=t_emb)
+                x = x.reshape(bs, n, -1)
             elif isinstance(layer, Gatv2CrossAttention) or isinstance(layer, TransformerCrossAttention):
+                x = x.reshape(-1, x.shape[-1])
                 x = layer(x=x, edge_index=edge_index, cond=cond)
+                x = x.reshape(bs, n, -1)
             else:
-                x = layer(x=x, edge_index=edge_index)
+                x = layer(verts=x, faces=faces, edges=edge_index.T)
         return x
 
 
@@ -99,24 +105,107 @@ def edge_based_unpooling(edge_index, feature_matrix):
 
     # Append new node coordinates to feature matrix
     new_feature_matrix = torch.cat([feature_matrix, new_node_coords], dim=0)
-
-    # Create new edge index with new edges connecting old nodes with new nodes
-    #new_node_indices = torch.arange(num_nodes, num_nodes + num_edges).unsqueeze(-1)
+    # check for duplicates
+    #new_feature_matrix = torch.unique(new_feature_matrix, dim=0)
     new_node_indices = torch.arange(num_nodes, new_feature_matrix.shape[0]).unsqueeze(-1).to(feature_matrix.device)
     new_edges_1 = torch.cat([edge_index[:, 0].unsqueeze(-1), new_node_indices], dim=1)
     new_edges_2 = torch.cat([new_node_indices, edge_index[:, 1].unsqueeze(-1)], dim=1)
-
     # Initialize new edge index with old edges and new edges
     new_edge_index = torch.cat([edge_index, new_edges_1, new_edges_2], dim=0)
 
     # Connect the three new vertices for each old triangle
-    #for i in range(num_nodes, num_nodes + num_edges, 3):
     for i in range(num_nodes, new_feature_matrix.shape[0]-2, 3):
         triangle_edges = torch.tensor([[i, i + 1], [i + 1, i + 2], [i + 2, i]]).to(feature_matrix.device)
         new_edge_index = torch.cat([new_edge_index, triangle_edges], dim=0)
 
     return new_edge_index.T, new_feature_matrix
 
+class GraphNetv2(nn.Module):
+    def __init__(
+        self,
+        backbone,
+        in_channels: int,
+        out_channels: int,
+        d_model: int,
+        n_res_blocks: int,
+        attention_levels: List[int],
+        channel_multipliers: List[int],
+        unpooling_levels: List[int],
+        n_heads: int,
+        channels: int= 16,
+        d_cond: int = 1024,
+    ) -> None:
+        super().__init__()
+        self.backbone = backbone
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.d_model = d_model 
+        self.in_proj = nn.Linear(in_channels, d_model) 
+
+        self.spatial_transformer = SpatialTransformer(channels=d_model, n_heads=8, n_layers=4, d_cond=d_cond)
+        # print paramters
+        print("Number of parameters: ", sum(p.numel() for p in self.spatial_transformer.parameters() if p.requires_grad))
+        self.unpooling_layer = SubdivideMeshes() #GraphUnpoolingMesh()
+    
+        levels = len(channel_multipliers)
+        d_time_emb = None
+        channels_list = [channels * m for m in channel_multipliers] # [1, 2, 4, 8]
+        
+        self.output_blocks = nn.ModuleList([])
+        channels = d_model
+        for i in reversed(range(levels)):
+            layers = [
+                GraphResNetBlock(
+                    channels, 
+                    d_time_emb,
+                    out_channels=channels_list[i],
+                )
+            ]
+            channels = channels_list[i]
+            if n_res_blocks > 0:
+                for _ in range(n_res_blocks-1):
+                    layers.append(GraphResNetBlock(channels, d_time_emb))
+            if i in attention_levels:
+                layers.append(Gatv2CrossAttention(channels,channels, n_heads, d_cond, concat=False))
+
+            if i in unpooling_levels:
+                layers.append(self.unpooling_layer)
+            
+
+            self.output_blocks.append(TimestepEmbedSequential(*layers))
+
+        self.out_proj = nn.Linear(channels, out_channels)
+
+    def forward(self, input_data:dict[Tensor]):#x: Tensor, edge_index: Tensor, cond=None, t_emb=None) -> Tensor:
+#        x = input_data["init_features"]
+#        edge_index = input_data["init_edge_index"]#.T
+#        faces = input_data["init_faces"].squeeze(0)
+        #mesh = input_data["init_mesh"]
+        #x = mesh.verts_padded()
+        x = input_data["init_features"]
+        edge_index = input_data["init_edges"]
+        faces = input_data["init_faces"]
+        bs, nv, fdim = x.shape
+        #x = x.reshape(-1, fdim)
+        img = input_data["img"].unsqueeze(0)
+        t_emb = None
+        
+        cond = self.backbone.forward_features(img)#[0]
+        cond = cond.flatten(2)
+        cond = cond.permute(0, 2, 1)
+        x = self.in_proj(x)
+        x = self.spatial_transformer(x, edge_index, cond=cond)
+        for module in self.output_blocks:
+            # if modeule unpool update mesh, feed mesh to module, extract vertices
+            x = module(x=x, faces=faces, edge_index=edge_index, t_emb=t_emb, cond=cond)
+            if isinstance(x, tuple):
+                x, faces, edge_index = x
+            #print(x.shape)
+        return self.out_proj(x), edge_index ,faces#self.out(x, edge_index), edge_index    
+            
+   
+    
 class GraphNet(nn.Module):
     def __init__(
         self,
@@ -164,23 +253,8 @@ class GraphNet(nn.Module):
         self.in_proj = GCNConv(in_channels, channels)
 
         self.input_blocks = nn.ModuleList([])
-#        self.input_blocks.append(
-#            TimestepEmbedSequential(GCNConv(in_channels, channels))
-#        )
         input_block_channels = [channels]
         channels_list = [channels * m for m in channel_multipliers]
-
-#        for i, _ in itertools.product(range(levels), range(n_res_blocks + 1)):
-#            layers = [
-#                GraphResNetBlock(channels, d_time_emb, out_channels=channels_list[i])
-#            ]
-#            channels = channels_list[i]
-#
-#            if i in attention_levels:
-#                layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
-#
-#            self.input_blocks.append(TimestepEmbedSequential(*layers))
-#            input_block_channels.append(channels)
         for i in range(levels):
             layers = [
                 GraphResNetBlock(channels, d_time_emb, out_channels=channels_list[i])
@@ -203,22 +277,6 @@ class GraphNet(nn.Module):
         )
 
         self.output_blocks = nn.ModuleList([])
-#        for i, _ in itertools.product(reversed(range(levels)), range(n_res_blocks + 1)):
-#            layers = [
-#                GraphResNetBlock(
-#                    channels, #+ input_block_channels.pop(),
-#                    d_time_emb,
-#                    out_channels=channels_list[i],
-#                )
-#            ]
-#            channels = channels_list[i]
-#            if i in attention_levels:
-#                layers.append(attention_layer(channels,channels, n_heads, d_cond, concat=False))
-#
-#            if i in unpooling_levels:
-#                layers.append(self.unpooling_layer)
-#
-#            self.output_blocks.append(TimestepEmbedSequential(*layers))
         for i in reversed(range(levels)):
             layers = [
                 GraphResNetBlock(
@@ -248,8 +306,8 @@ class GraphNet(nn.Module):
 
     def forward(self, x, edge_index,  cond=None,t_emb=None):
         cond = self.backbone(cond)#[0]
-        #cond = cond.flatten(2)
-        #cond = cond.permute(0, 2, 1)
+        cond = cond.flatten(2)
+        cond = cond.permute(0, 2, 1)
 
         x = self.in_proj(x, edge_index)
         x = self.z_extra(x, edge_index, cond)
@@ -616,8 +674,8 @@ class SpatialTransformer(nn.Module):
     def __init__(self, channels: int, n_heads: int, n_layers: int, d_cond: int) -> None:
         super().__init__()
         # self.layers = nn.ModuleList([SpatTransformer(channels, channels, n_heads, d_cond) for _ in range(n_layers)])
-        self.norm = nn.BatchNorm1d(channels)
-        self.proj_in = GCNConv(channels, channels)
+        self.norm = torch.nn.GroupNorm(num_groups=16, num_channels=channels, eps=1e-6, affine=True)#nn.BatchNorm1d(channels)
+        self.proj_in = nn.Linear(channels, channels)#GCNConv(channels, channels)
 
         self.transformer_blocks = nn.ModuleList(
             [
@@ -627,18 +685,21 @@ class SpatialTransformer(nn.Module):
                 for _ in range(n_layers)
             ]
         )
-        self.proj_out = GCNConv(channels, channels)
+        self.proj_out = nn.Linear(channels, channels) #GCNConv(channels, channels)
 
     def forward(self, x: Tensor, edge_index: Tensor, cond: Tensor) -> Tensor:
-        assert x.ndim == 2, "x must be 2d"
+        """ x is (batch_size, channels, seq_len)"""
+        #assert x.ndim == 2, "x must be 2d"
         assert cond.ndim == 3, "cond must be (batch_size, seq_len, cond_dim)"
-        n, d = x.shape
-        x_in = x
-        x = self.norm(x)
-        x = self.proj_in(x, edge_index)
+        if x.ndim == 3:
+            x = x.permute(0,2,1)
+            cond = cond.repeat(x.shape[0], 1,1)
+        x_in = x.permute(0,2,1)
+        x = self.norm(x).permute(0,2,1)
+        x = self.proj_in(x)#, edge_index)
         for block in self.transformer_blocks:
             x = block(x, cond)
-        x = self.proj_out(x, edge_index)
+        x = self.proj_out(x)#, edge_index)
         return x + x_in
 
 
@@ -646,8 +707,9 @@ class BasicTransformerBlock(nn.Module):
     def __init__(self, d_model: int, n_heads: int, d_head: int, d_cond: int) -> None:
         super().__init__()
 
-        # self.attn1 = CrossAttention(d_model, d_model, n_heads, d_head)
-        # self.norm1 = nn.LayerNorm(d_model)
+#        self.attn1 = CrossAttention(d_model,d_model, n_heads, d_head)
+#        self.norm1 = nn.LayerNorm(d_model)
+#
         self.attn2 = CrossAttention(
             d_model, d_cond, n_heads, d_head, return_heads=False
         )
@@ -662,8 +724,12 @@ class BasicTransformerBlock(nn.Module):
 
     def forward(self, x: Tensor, cond: Tensor) -> Tensor:
         """For now ignore self attention"""
-        # x = x + self.attn1(self.norm1(x))
-        x = x + self.attn2(self.norm2(x), cond)
+        #x = x + self.attn1(self.norm1(x))
+        a =  self.attn2(self.norm2(x), cond)
+        if x.ndim == 3:
+            a = a.reshape(x.shape[0], x.shape[1], -1)
+
+        x = x +a# + self.attn2(self.norm2(x), cond)
         x = x + self.net(self.norm3(x))
         return x
 
@@ -692,10 +758,12 @@ class CrossAttention(nn.Module):
         self.out_proj = nn.Linear(d_attn, d_model, bias=False)
 
     def forward(self, x: Tensor, cond: Optional[Tensor] = None) -> Tensor:
-        bs = cond.shape[0]
+        if cond is not None:
+            bs = cond.shape[0]
         assert x.shape[0] % bs == 0, "batch size must be a divisor of x.shape[0]"
 
-        x = torch.stack(torch.chunk(x, bs, dim=0))
+        if x.ndim == 2:
+            x = torch.stack(torch.chunk(x, bs, dim=0))
         cond = x if cond is None else cond
         q = self.q_proj(x).view(*x.shape[:2], self.n_heads, -1)
         k = self.k_proj(cond).view(*cond.shape[:2], self.n_heads, -1)

@@ -12,13 +12,36 @@ from data_tools.graph_tools.graph import Graph
 import open3d as o3d
 import torch
 import timm
-from gat_inf import SpatialTransformer, GraphNet, AttentionMode
+from gat_inf import SpatialTransformer, GraphNet, GraphNetv2, AttentionMode
 
-points = np.load("/home/bmw/Documents/Sebastian/pose_project/pred.npy")#[0]
+points = np.load("/home/bmw/Documents/Sebastian/pose_project/predx.npy")#[0]
+points_gt = np.load("/home/bmw/Documents/Sebastian/pose_project/targetx.npy")#[0]
+
 #points = np.load("/home/bmw/Documents/Sebastian/pose_project/init.npy")
-#pcd = o3d.geometry.PointCloud()
-#pcd.points = o3d.utility.Vector3dVector(points)
-#o3d.visualization.draw_geometries([pcd])
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+def visualize_and_save(pointcloud, filename):
+    fig = plt.figure(figsize=(10,10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Point cloud is of shape (N,3gt)
+    x = pointcloud[:,0]
+    y = pointcloud[:,1]
+    z = pointcloud[:,2]
+
+    ax.scatter(x, y, z, marker='o')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+
+    plt.savefig(filename)
+    plt.show()
+visualize_and_save(points, "predx.png")
+visualize_and_save(points_gt, "gtx.png")
+pcd = o3d.geometry.PointCloud()
+pcd.points = o3d.utility.Vector3dVector(points)
+o3d.visualization.draw_geometries([pcd])
+vis = o3d.visualization.Visualizer()
 pred_edges = np.load("/home/bmw/Documents/Sebastian/pose_project/pred_edges.npy")#[0]
 gt_points = np.load("/home/bmw/Documents/Sebastian/pose_project/gt.npy")#[0]
 gt_normals = torch.from_numpy(gt_points[1]).squeeze()
@@ -29,19 +52,19 @@ pred_points = torch.from_numpy(points[0]).squeeze()
 
 
 
-dataset = BOPDataset(
-    "/home/bmw/Documents/limemod/lm",#home/bmw/Documents/limemod/lm",
-    Mode.TRAIN,
-    use_cache=True,
-    single_object=False,
-    num_points=5082,
-)
-from data_tools.dataset import DatasetLM
-
-dataset = DatasetLM(dataset)
-a = dataset[0]
-
-a = dataset.get_graph_gt_path(378)
+#dataset = BOPDataset(
+#    "/home/bmw/Documents/limemod/lm",#home/bmw/Documents/limemod/lm",
+#    Mode.TRAIN,
+#    use_cache=True,
+#    single_object=False,
+#    num_points=5082,
+#)
+#from data_tools.dataset import DatasetLM
+#
+#dataset = DatasetLM(dataset)
+#a = dataset[0]
+#
+#a = dataset.get_graph_gt_path(378)
 a = np.load('/home/bmw/Documents/limemod/lm/train_pbr/000037/graphs/init/init_graph_000000.npy')
 features = a["initial_features"][0]
 edge_index = a["initial_edges"][0]
@@ -67,6 +90,24 @@ graph_net = GraphNet(
     unpooling_levels=[], # only in downsampling, avoid unpooling in last level
     n_heads=4,
     d_cond=768,
+)
+graph_netv2 = GraphNetv2(
+    backbone=backbone,
+    in_channels=3,
+    out_channels=3,
+    d_model=768,
+    n_res_blocks=2,
+    attention_levels=[1, 2],
+    unpooling_levels=[2,5, 6],
+    channel_multipliers=[1,1, 2,2, 4 ,8, 16, 32],
+    n_heads=4,
+    channels=16,
+    d_cond=768,
+)
+b = graph_netv2(features, edge_index.T, cond=cond)
+# print graph net parameters
+print(
+    "number of parameters: ", sum(p.numel() for p in graph_netv2.parameters() if p.requires_grad)
 )
 b= graph_net(features, edge_index.T, cond=cond)
 # print graph net parameters

@@ -23,14 +23,34 @@ from utils.flags import Mode
 #sphere = prepare_mesh(sphere)
 #sphere_graph = Graph.from_mesh(sphere)
 
+from pytorch3d.utils.ico_sphere import ico_sphere
+sphere = ico_sphere(3)
+sphere_verts = sphere.verts_packed()
+sphere_faces = sphere.faces_packed()
+sphere_edges = sphere.edges_packed()
+
 dataset = BOPDataset(
     "/home/bmw/Documents/limemod/lm",#home/bmw/Documents/limemod/lm",
     Mode.TRAIN,
     use_cache=True,
     single_object=False,
+    num_points=642,
 )
-dummy_dataset = DummyDataset(bop_dataset=dataset)
+a = dataset.generate_initial_meshes(img_width=640, img_height=480)
+b = dataset.generate_gt_meshes(img_width=640, img_height=480, num_points=642)
+import cv2
+img = cv2.imread(str(dataset.get_img_path(0)))
+bboxs = dataset.get_bbox_objs(0)#[9]
+# xywh to xyxy
+for bbox in bboxs:
+    bbox[2] += bbox[0]
+    bbox[3] += bbox[1]
+    #visualize and save bbox as "bbox.png"
+    img = cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 2)
+cv2.imwrite("bbox.png", img)
 
+
+dummy_dataset = DummyDataset(bop_dataset=dataset)
 inp = dummy_dataset[0]
 
 arrow = Graph.from_mesh(dummy_dataset.ARROW)

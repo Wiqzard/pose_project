@@ -5,7 +5,10 @@ class Mode(Enum):
     TRAIN = auto()
     TEST = auto()
     PREDICT = auto()
-
+class BBoxType(Enum):
+    OBJECT = auto()
+    VISIBLE = auto()
+    JITTER = auto() 
 
 class AttentionMode(Enum):
     pass
