@@ -96,12 +96,15 @@ class BaseValidator:
             self.device = trainer.device
             # self.data = trainer.data
             model = trainer.ema.ema or trainer.model
-            self.args.half = self.device.type != "cpu"  # force FP16 val during training
+            #self.args.half = self.device.type != "cpu"  # force FP16 val during training
             model = model.half() if self.args.half else model.float()
             self.model = model
+            self.loss_names = trainer.loss_names
             self.loss = torch.zeros_like(trainer.loss_items, device=trainer.device)
+            #self.criterion = trainer.criterion
             model.eval()
         else:
+            raise NotImplementedError("Validation of pre-trained models not supported")
             callbacks.add_integration_callbacks(self)
             self.run_callbacks("on_val_start")
             assert model is not None, "Either trainer or model is needed for validation"
@@ -160,7 +163,7 @@ class BaseValidator:
         # which may affect classification task since this arg is in yolov5/classify/val.py.
         # bar = tqdm(self.dataloader, desc, n_batches, not self.training, bar_format=TQDM_BAR_FORMAT)
         bar = tqdm(self.dataloader, desc, n_batches, bar_format=TQDM_BAR_FORMAT)
-        self.init_metrics(de_parallel(model))
+        self.init_metrics()#de_parallel(model))
         self.jdict = []  # empty before each val
         for batch_i, batch in enumerate(bar):
             self.run_callbacks("on_val_batch_start")
@@ -171,35 +174,33 @@ class BaseValidator:
 
             # Inference
             with dt[1]:
-                preds = model(batch["img"], augment=self.args.augment)
-
-            # Loss
-            with dt[2]:
-                if self.training:
-                    self.loss += model.loss(batch, preds)[1]
+                preds = model(batch)
 
             # Postprocess
+            with dt[2]:
+                preds, batch = self.postprocess(preds, input_data=batch)
+
+            # Loss
             with dt[3]:
-                preds = self.postprocess(preds)
+                if self.training:
+                    self.loss += self.criterion(preds, batch)[1]
 
             self.update_metrics(preds, batch)
-
             self.run_callbacks("on_val_batch_end")
-        stats = self.get_stats()
-        self.check_stats(stats)
+#        stats = self.get_stats()
+#        self.check_stats(stats)
         self.speed = dict(
             zip(
                 self.speed.keys(),
                 (x.t / len(self.dataloader.dataset) * 1e3 for x in dt),
             )
         )
-        self.finalize_metrics()
         self.print_results()
         self.run_callbacks("on_val_end")
         if self.training:
             model.float()
             results = {
-                **stats,
+                **self.metrics.results_dict,
                 **trainer.label_loss_items(
                     self.loss.cpu() / len(self.dataloader), prefix="val"
                 ),
@@ -218,6 +219,9 @@ class BaseValidator:
                     json.dump(self.jdict, f)  # flatten and save
                 stats = self.eval_json(stats)  # update stats
             return stats
+    
+    def criterion(self, batch, preds):
+        raise NotImplementedError("criterion function not implemented in validator")
 
     def add_callback(self, event: str, callback):
         """Appends the given callback."""

@@ -4,62 +4,6 @@ from pathlib import Path
 from utils import SimpleClass
 
 
-class PoseMetrics(SimpleClass):
-    
-    def __init__(self, save_dir=Path('.'), plot=False, on_plot=None, names=()) -> None:
-        self.save_dir = save_dir
-        self.plot = plot
-        self.on_plot = on_plot
-        self.names = names
-        self.box = Metric()
-        self.speed = {'preprocess': 0.0, 'inference': 0.0, 'loss': 0.0, 'postprocess': 0.0}
-
-    def process(self, tp, conf, pred_cls, target_cls):
-        """Process predicted results for object detection and update metrics."""
-        results = ap_per_class(tp,
-                               conf,
-                               pred_cls,
-                               target_cls,
-                               plot=self.plot,
-                               save_dir=self.save_dir,
-                               names=self.names,
-                               on_plot=self.on_plot)[2:]
-        self.box.nc = len(self.names)
-        self.box.update(results)
-
-    @property
-    def keys(self):
-        """Returns a list of keys for accessing specific metrics."""
-        return ['metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)']
-
-    def mean_results(self):
-        """Calculate mean of detected objects & return precision, recall, mAP50, and mAP50-95."""
-        return self.box.mean_results()
-
-    def class_result(self, i):
-        """Return the result of evaluating the performance of an object detection model on a specific class."""
-        return self.box.class_result(i)
-
-    @property
-    def maps(self):
-        """Returns mean Average Precision (mAP) scores per class."""
-        return self.box.maps
-
-    @property
-    def fitness(self):
-        """Returns the fitness of box object."""
-        return self.box.fitness()
-
-    @property
-    def ap_class_index(self):
-        """Returns the average precision index per class."""
-        return self.box.ap_class_index
-
-    @property
-    def results_dict(self):
-        """Returns dictionary of computed performance metrics and statistics."""
-        return dict(zip(self.keys + ['fitness'], self.mean_results() + [self.fitness]))
-
         
 from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
@@ -75,40 +19,56 @@ from engine.losses.rot_loss import angular_distance
 class Metrics:
     """Pose metrics class to store metrics for each eval."""
 
+    args: None 
     losses: list[float] = field(default_factory=list)
-    ang_distances: list[float] = field(default_factory=list)
-    trans_distances: list[float] = field(default_factory=list)
+   # ang_distances: list[float] = field(default_factory=list)
+   # trans_distances: list[float] = field(default_factory=list)
+    ang_distances_cls: dict[int, list[float]] = field(default_factory=dict)
+    trans_distances_cls: dict[int, list[float]] = field(default_factory=dict)
 
     def update(
         self,
-        loss_dict: dict[str, torch.Tensor],
-        gt_data: dict[str, torch.Tensor],
+        loss: torch.Tensor,
         preds: dict[str, torch.Tensor],
+        input_data: dict[str, torch.Tensor],
     ) -> None:
         """Update the metrics with new data."""
 
         # loss_items = {k: v.clone().detach() for k, v in loss_dict.items()}
-        loss = sum(loss_dict.values())
+        obj_id = input_data["roi_cls"]
+        total_loss = sum(loss)
 
         pred_rot = preds["rot"]
         pred_trans = preds["trans"]  # pred_t_ (bs, 3)
 
-        gt_rot = gt_data["gt_pose"][:, :3, :3]
-        gt_trans = gt_data["gt_pose"][:, :3, 3]
+        gt_rot = input_data["gt_pose"][:, :3, :3]
+        gt_trans = input_data["gt_pose"][:, :3, 3]
 
         ang_distance = angular_distance(pred_rot, gt_rot)  # mean of batch
         eucl_distance = torch.norm(
             (pred_trans - gt_trans), p=2, dim=1
-        ).mean()  # mean of batch
+        )#.mean()  # mean of batch
 
-        self.losses.append(loss.item())
-        self.ang_distances.append(ang_distance.item())
-        self.trans_distances.append(eucl_distance.item())
+        self.losses.append(total_loss.item())
 
+        for i, obj in enumerate(obj_id):
+            obj = obj.item()
+            if obj not in self.ang_distances_cls:
+                self.ang_distances_cls[obj] = []
+            if obj not in self.trans_distances_cls:
+                self.trans_distances_cls[obj] = []
+            self.ang_distances_cls[obj].append(ang_distance[i].item())
+            self.trans_distances_cls[obj].append(eucl_distance[i].item())
+
+    
     def reset(self) -> None:
         self.losses = []
         self.ang_distances = []
         self.trans_distances = []
+    
+    @property
+    def num_targets(self) -> int:
+        return sum(len(class_ang_distances) for class_ang_distances in self.ang_distances_cls.values()) 
 
     @property
     def avg_losses(self) -> dict[str, float]:
@@ -124,11 +84,21 @@ class Metrics:
 
     @property
     def avg_ang_distance(self) -> float:
-        return sum(self.ang_distances) / len(self.ang_distances)
+        total_ang_distance = sum(sum(ang_list) for ang_list in self.ang_distances_cls.values())
+        return total_ang_distance / self.num_targets 
 
     @property
     def avg_trans_distance(self) -> float:
-        return sum(self.trans_distances) / len(self.trans_distances)
+        total_trans_distance =sum(sum(trans_list) for trans_list in self.ang_distances_cls.values())
+        return total_trans_distance / self.num_targets
+    
+    @property
+    def avg_trans_distance_cls(self) -> dict[int, float]:
+        return {k: sum(v) for k, v in self.trans_distances_cls.items()}
+    
+    @property
+    def avg_ang_distance_cls(self) -> dict[int, float]:
+        return {k: sum(v) for k, v in self.ang_distances_cls.items()}
 
     @property
     def keys(self) -> list[str]:
@@ -138,6 +108,10 @@ class Metrics:
     def avg_metrics(self) -> list[float]:
         """Return the metrics."""
         return [self.avg_loss, self.avg_ang_distance, self.avg_trans_distance]
+    
+    @property
+    def avg_metrics_cls(self) -> dict[int, list[float]]:
+        return {}
 
     @property
     def empty_dict(self) -> list[float]:
@@ -157,6 +131,9 @@ class Metrics:
         w = np.array([0.00, 0.1, 10])  # weights for angular, translation, loss
         return (1 / np.array(self.avg_metrics).copy() * w).sum() / 100
 
+    def num_targets_cls(self, obj_id: int) -> int:
+        return len(self.ang_distances_cls[obj_id])
+    
     def __str__(self) -> str:
         """Return the string representation of the metrics."""
         return f" Total Loss: {self.avg_loss:.4f},\n Angular Distance: {self.avg_ang_distance:.4f},\n Translation (L2): {self.avg_trans_distance:.4f}"

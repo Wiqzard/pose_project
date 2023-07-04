@@ -66,7 +66,7 @@ rot_type: allo_rot6d  # {allo/ego}_{quat/rot6d/log_quat/lie_vec}
 
 # Loss settings
 num_pm_points: 3000
-pm_loss_sym: false  # use symmetric pm loss
+pm_loss_sym: true #false  # use symmetric pm loss
 pm_r_only: true  # only do r loss in pm
 pm_disentangle_t: false  # disentangle r/t
 pm_disentangle_z: false  # disentangle r/xy/z

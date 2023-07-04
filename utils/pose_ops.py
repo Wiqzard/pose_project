@@ -2,11 +2,10 @@ from typing import List
 
 import numpy as np
 import torch
-import torch.nn.functional as F 
+import torch.nn.functional as F
 import math
 from transforms3d.axangles import axangle2mat
 from transforms3d.quaternions import axangle2quat, mat2quat, qmult, quat2mat
-
 
 
 def rot6d_to_mat_batch(d6):
@@ -31,6 +30,8 @@ def rot6d_to_mat_batch(d6):
 
     # (*,3)x3 --> (*,3,3)
     return torch.stack((x, y, z), dim=-1)  # (b,3,3)
+
+
 def quat2mat_torch(quat, eps=0.0):
     """Convert quaternion coefficients to rotation matrix.
     Args:
@@ -77,6 +78,7 @@ def quat2mat_torch(quat, eps=0.0):
         dim=1,
     ).reshape(B, 3, 3)
     return rotMat
+
 
 def get_rot_mat(rot, rot_type):
     if rot_type in ["ego_quat", "allo_quat"]:
@@ -88,7 +90,6 @@ def get_rot_mat(rot, rot_type):
     return rot_m
 
 
-
 def quat2mat_torch(quat, eps=0.0):
     """Convert quaternion coefficients to rotation matrix.
     Args:
@@ -159,9 +160,6 @@ def rot6d_to_mat_batch(d6):
 
     # (*,3)x3 --> (*,3,3)
     return torch.stack((x, y, z), dim=-1)  # (b,3,3)
-
-
-
 
 
 def quat_trans_to_pose_m(quat, trans):
@@ -394,7 +392,7 @@ def pose_from_predictions_test(pred_rots, pred_transes, eps=1e-4, is_allo=True):
 
     # quat_allo = pred_quats / (torch.norm(pred_quats, dim=1, keepdim=True) + eps)
     # quat_ego = allocentric_to_egocentric_torch(translation, quat_allo, eps=eps)
-    # use numpy since it is more accurate
+    # use np since it is more accurate
     if pred_rots.shape[-1] == 4 and pred_rots.ndim == 2:
         pred_quats = pred_rots.detach().cpu().numpy()  # allo
         ego_rot_preds = np.zeros((pred_quats.shape[0], 3, 3), dtype=np.float32)
@@ -435,7 +433,7 @@ def pose_from_predictions_test(pred_rots, pred_transes, eps=1e-4, is_allo=True):
             else:
                 cur_ego_mat = pred_rots[i]
             ego_rot_preds[i] = cur_ego_mat
-    return torch.from_numpy(ego_rot_preds), translation
+    return torch.from_np(ego_rot_preds), translation
 
 
 def allo_to_ego_mat_torch(translation, rot_allo, eps=1e-4):
@@ -572,9 +570,9 @@ def pose_from_predictions_test_centroid(
     cy = c[:, 1:2]  # [#roi, 1]
 
     # unnormalize regressed z
-    if z_type == "ABS":
+    if z_type == "abs":
         z = pred_z_vals
-    elif z_type == "REL":
+    elif z_type == "rel":
         # z_1 / z_2 = s_2 / s_1 ==> z_1 = s_2 / s_1 * z_2
         z = pred_z_vals * resize_ratios.view(-1, 1)
     else:
@@ -603,7 +601,7 @@ def pose_from_predictions_test_centroid(
 
     # quat_allo = pred_quats / (torch.norm(pred_quats, dim=1, keepdim=True) + eps)
     # quat_ego = allocentric_to_egocentric_torch(translation, quat_allo, eps=eps)
-    # use numpy since it is more accurate
+    # use np since it is more accurate
     if pred_rots.shape[-1] == 4 and pred_rots.ndim == 2:
         pred_quats = pred_rots.detach().cpu().numpy()  # allo
         ego_rot_preds = np.zeros((pred_quats.shape[0], 3, 3), dtype=np.float32)
@@ -644,7 +642,7 @@ def pose_from_predictions_test_centroid(
             else:
                 cur_ego_mat = pred_rots[i]
             ego_rot_preds[i] = cur_ego_mat
-    return torch.from_numpy(ego_rot_preds), translation
+    return torch.from_np(ego_rot_preds), translation
 
 
 def pose_from_predictions_train_centroid(
@@ -688,9 +686,9 @@ def pose_from_predictions_train_centroid(
     cy = c[:, 1:2]  # [#roi, 1]
 
     # unnormalize regressed z
-    if z_type == "ABS":
+    if z_type == "abs":
         z = pred_z_vals
-    elif z_type == "REL":
+    elif z_type == "rel":
         # z_1 / z_2 = s_2 / s_1 ==> z_1 = s_2 / s_1 * z_2
         z = pred_z_vals * resize_ratios.view(-1, 1)
     else:
@@ -807,3 +805,69 @@ def get_closest_rot_batch(pred_rots, gt_rots, sym_infos):
         closest_gt_rots[i] = closest_rot
     closest_gt_rots = torch.tensor(closest_gt_rots, device=device, dtype=gt_rots.dtype)
     return closest_gt_rots
+
+
+def rotation_matrix(angle, direction, point=None):
+    """Return matrix to rotate about axis defined by point and direction.
+
+    >>> R = rotation_matrix(math.pi/2, [0, 0, 1], [1, 0, 0])
+    >>> np.allclose(np.dot(R, [0, 0, 0, 1]), [1, -1, 0, 1])
+    True
+    >>> angle = (random.random() - 0.5) * (2*math.pi)
+    >>> direc = np.random.random(3) - 0.5
+    >>> point = np.random.random(3) - 0.5
+    >>> R0 = rotation_matrix(angle, direc, point)
+    >>> R1 = rotation_matrix(angle-2*math.pi, direc, point)
+    >>> is_same_transform(R0, R1)
+    True
+    >>> R0 = rotation_matrix(angle, direc, point)
+    >>> R1 = rotation_matrix(-angle, -direc, point)
+    >>> is_same_transform(R0, R1)
+    True
+    >>> I = np.identity(4, np.float64)
+    >>> np.allclose(I, rotation_matrix(math.pi*2, direc))
+    True
+    >>> np.allclose(2, np.trace(rotation_matrix(math.pi/2,
+    ...                                               direc, point)))
+    True
+    """
+    sina = math.sin(angle)
+    cosa = math.cos(angle)
+    direction = unit_vector(direction[:3])
+    # rotation matrix around unit vector
+    R = np.diag([cosa, cosa, cosa])
+    R += np.outer(direction, direction) * (1.0 - cosa)
+    direction *= sina
+    R += np.array(
+        [
+            [0.0, -direction[2], direction[1]],
+            [direction[2], 0.0, -direction[0]],
+            [-direction[1], direction[0], 0.0],
+        ]
+    )
+    M = np.identity(4)
+    M[:3, :3] = R
+    if point is not None:
+        # rotation not around origin
+        point = np.array(point[:3], dtype=np.float64, copy=False)
+        M[:3, 3] = point - np.dot(R, point)
+    return M
+
+
+def unit_vector(data, axis=None, out=None):
+    if out is None:
+        data = np.array(data, dtype=np.float64, copy=True)
+        if data.ndim == 1:
+            data /= math.sqrt(np.dot(data, data))
+            return data
+    else:
+        if out is not data:
+            out[:] = np.array(data, copy=False)
+        data = out
+    length = np.atleast_1d(np.sum(data * data, axis))
+    np.sqrt(length, length)
+    if axis is not None:
+        length = np.expand_dims(length, axis)
+    data /= length
+    if out is None:
+        return data

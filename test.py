@@ -26,7 +26,7 @@ def test_dataset():
         single_object=True,
         num_points=642,
     )
-
+    a = dataset.models_info
     # dataset.generate_graphs(simplify_factor=10, img_width=640, img_height=480)
     #lm_dataset = LMDataset(bop_dataset=dataset)
     lm_dataset = DirectDataset(bop_dataset=dataset, cfg=cfg)

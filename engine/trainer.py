@@ -217,13 +217,13 @@ class BaseTrainer:
             self.test_loader = self.get_dataloader(
                 self.testset, batch_size=batch_size * 2, rank=-1, mode=Mode.TEST
             )
-            #self.validator = self.get_validator()
-            #metric_keys = self.validator.metrics.keys + self.label_loss_items(
-            #    prefix="val"
-            #)
-          #  self.metrics = dict(
-          #      zip(metric_keys, [0] * len(metric_keys))
-          #  )  # TODO: init metrics for plot_results()?
+            self.validator = self.get_validator()
+            metric_keys = self.validator.metrics.keys + self.label_loss_items(
+                prefix="val"
+            )
+            self.metrics = dict(
+                zip(metric_keys, [0] * len(metric_keys))
+            )  # TODO: init metrics for plot_results()?
             self.ema = ModelEMA(self.model)
          #   if self.args.plots and not self.args.v5loader:
          #       self.plot_training_labels()
@@ -298,7 +298,7 @@ class BaseTrainer:
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
                     preds = self.model(batch)
-                    preds = self.postprocess_batch(preds, batch)
+                    preds, batch = self.postprocess_batch(preds, batch)
                     self.loss, self.loss_items = self.criterion(preds, batch)
                     if RANK != -1:
                         self.loss *= world_size
@@ -347,29 +347,29 @@ class BaseTrainer:
             self.scheduler.step()
             self.run_callbacks("on_train_epoch_end")
 
-#            if RANK in (-1, 0):
-#                # Validation
-#                self.ema.update_attr(
-#                    self.model,
-#                    include=["yaml", "nc", "args", "names", "stride", "class_weights"],
-#                )
-#                final_epoch = (epoch + 1 == self.epochs) or self.stopper.possible_stop
-#
-#                if self.args.val or final_epoch:
-#                    self.metrics, self.fitness = self.validate()
-#                self.save_metrics(
-#                    metrics={
-#                        **self.label_loss_items(self.tloss),
-#                        **self.metrics,
-#                        **self.lr,
-#                    }
-#                )
-#                self.stop = self.stopper(epoch + 1, self.fitness)
-#
-#                # Save model
-#                if self.args.save or (epoch + 1 == self.epochs):
-#                    self.save_model()
-#                    self.run_callbacks("on_model_save")
+            if RANK in (-1, 0):
+                # Validation
+                self.ema.update_attr(
+                    self.model,
+                    include=["yaml", "nc", "args", "names", "stride", "class_weights"],
+                )
+                final_epoch = (epoch + 1 == self.epochs) or self.stopper.possible_stop
+
+                if self.args.val or final_epoch:
+                    self.metrics, self.fitness = self.validate()
+                self.save_metrics(
+                    metrics={
+                        **self.label_loss_items(self.tloss),
+                        **self.metrics,
+                        **self.lr,
+                    }
+                )
+                self.stop = self.stopper(epoch + 1, self.fitness)
+
+                # Save model
+                if self.args.save or (epoch + 1 == self.epochs):
+                    self.save_model()
+                    self.run_callbacks("on_model_save")
 
             tnow = time.time()
             self.epoch_time = tnow - self.epoch_time_start
@@ -451,6 +451,8 @@ class BaseTrainer:
         ) 
         return ckpt
 
+
+
     def optimizer_step(self):
         """Perform a single step of the training optimizer with gradient clipping and EMA update."""
         self.scaler.unscale_(self.optimizer)  # unscale gradients
@@ -493,9 +495,9 @@ class BaseTrainer:
 
     def get_validator(self):
         """Returns a NotImplementedError when the get_validator function is called."""
+        raise NotImplementedError("get_validator function not implemented in trainer")
         self.loss_names = ["loss"]
         return 
-        #raise NotImplementedError("get_validator function not implemented in trainer")
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
         """
@@ -510,12 +512,18 @@ class BaseTrainer:
         """
         raise NotImplementedError("criterion function not implemented in trainer")
 
-    def label_loss_items(self, loss_items=None, prefix="train"):
+    def label_loss_items(self, loss_items=None, prefix='train'):
         """
         Returns a loss dict with labelled training loss items tensor
         """
         # Not needed for classification but necessary for segmentation & detection
-        return {"loss": loss_items} if loss_items is not None else ["loss"]
+        #return {'loss': loss_items} if loss_items is not None else ['loss']
+        keys = [f'{prefix}/{x}' for x in self.loss_names]
+        if loss_items is not None:
+            loss_items = [round(float(x), 5) for x in loss_items]  # convert tensors to 5 decimal place floats
+            return dict(zip(keys, loss_items))
+        else:
+            return keys
 
     def set_model_attributes(self):
         """

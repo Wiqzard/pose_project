@@ -57,7 +57,7 @@ def angular_distance_rot(pred_rot: torch.Tensor, gt_rot: torch.Tensor) -> torch.
     angle_rad = torch.acos(cos_angle)
     angle_deg = torch.rad2deg(angle_rad)
 
-    return angle_deg.mean()
+    return angle_deg #.mean()
 
 
 def rotation_matrix_to_angle_axis(matrix: torch.Tensor) -> torch.Tensor:

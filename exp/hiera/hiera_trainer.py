@@ -17,7 +17,7 @@ from utils.flags import Mode
 from utils.pose_ops import pose_from_pred, pose_from_pred_centroid_z, get_rot_mat
 
 
-#from .hiera_validator import HIERAValidator
+from .hiera_validator import HIERAValidator
 from engine.trainer import BaseTrainer
 #from engine.optimizer.ranger import Ranger
 #from utils.torch_utils import attempt_load_one_weight
@@ -53,6 +53,7 @@ class HIERATrainer(BaseTrainer):
             batch_gt = {
                 k: v.to(self.device, non_blocking=True) for k, v in batch_gt.items()
             }
+            batch_gt["sym_infos"] =  [self.trainset.sym_infos[obj_id_.item()].to(self.device) for obj_id_ in batch_in["roi_cls"]]
             batch = (batch_in, batch_gt)
         elif isinstance(batch, dict):
             batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
@@ -87,7 +88,7 @@ class HIERATrainer(BaseTrainer):
                 eps=1e-4,
                 is_allo="allo" in rot_type,
                 z_type=self.args.z_type,
-                is_train=train,
+                is_train=True,
             )
         elif self.args.trans_type == "trans":
             pred_ego_rot, pred_trans = pose_from_pred(
@@ -95,19 +96,14 @@ class HIERATrainer(BaseTrainer):
                 pred_t_,
                 eps=1e-4,
                 is_allo="allo" in rot_type,
-                is_train=train,
+                is_train=True,
             )
 
-        batch = {"rot": pred_ego_rot, "trans": pred_trans, "pred_t_": pred_t_}
-        if RANK in {-1, 0}:
-            batch_c = batch.copy()
-            input_data_c = input_data.copy()
-            batch_c.update(input_data_c)
-            batch_c = {k: v.cpu().detach() for k, v in batch_c.items()}
+        preds = {"rot": pred_ego_rot, "trans": pred_trans, "pred_t_": pred_t_}
+        batch = {k: v for k, v in input_data[0].items() if k != "roi_img"}
+        batch.update(input_data[1])
+        return preds, batch
 
-        return batch
-
-        return preds
     def get_dataset(
         self, img_path, mode=Mode.TRAIN, use_cache=True, single_object=True
     ):
@@ -179,44 +175,45 @@ class HIERATrainer(BaseTrainer):
 
     def get_validator(self) -> Any:
         return HIERAValidator(
-            dataloader=self.eval_loader, save_dir=self.output_dir, cfg=self.args
+            dataloader=self.test_loader, save_dir=self.save_dir, cfg=self.args
         )
 
     def criterion(self, pred: dict, gt: dict) -> dict:
-        out_rot = pred[0] 
-        out_trans = pred[1]
+        out_rot = pred["rot"]
+        out_trans = pred["trans"]
         out_centroid = pred["pred_t_"][:, :2]
         out_trans_z = pred["pred_t_"][:, 2]
 
-        gt_trans = gt[1]["gt_pose"][:, :3, 3]
-        gt_rot = gt[1]["gt_pose"][:, :3, :3]
-        gt_trans_ratio = gt[0]["trans_ratio"]
-        gt_points = gt[1]["gt_points"]
-        sym_infos = gt[0]["symmetry_info"]
-        extents = gt["roi_extents"]
+        obj_id = gt["roi_cls"]
+        gt_trans = gt["gt_pose"][:, :3, 3]
+        gt_rot = gt["gt_pose"][:, :3, :3]
+        gt_trans_ratio = gt["trans_ratio"]
+        gt_points = gt["gt_points"]
+        sym_infos = gt["sym_infos"]
+        #extents = gt["roi_extents"]
         loss_dict = {}
         if self.args.pm_lw > 0:
             loss_pm = compute_point_matching_loss(
-                loss_cfg=self.args,
+                args=self.args,
                 out_rot=out_rot,
                 gt_rot=gt_rot,
                 gt_points=gt_points,
                 out_trans=out_trans,
                 gt_trans=gt_trans,
-                extents=extents,
+                extents=None, #extents,
                 sym_infos=sym_infos,
             )
             loss_dict.update({**loss_pm})
 
         if self.args.rot_lw > 0:
             loss_rot = compute_rot_loss(
-                loss_cfg=self.args, out_rot=out_rot, gt_rot=gt_rot
+                args=self.args, out_rot=out_rot, gt_rot=gt_rot
             )
             loss_dict.update({"loss_rot": loss_rot})
 
         if self.args.centroid_lw > 0 and self.args.trans_type == "centroid_z":
             loss_centroid = compute_centroid_loss(
-                loss_cfg=self.args,
+                args=self.args,
                 out_centroid=out_centroid,
                 gt_trans_ratio=gt_trans_ratio,
             )
@@ -229,16 +226,15 @@ class HIERATrainer(BaseTrainer):
             elif z_type == "abs":
                 gt_z = gt_trans[:, 2]
             loss_z = compute_z_loss(
-                loss_cfg=self.args, out_trans_z=out_trans_z, gt_z=gt_z
+                args=self.args, out_trans_z=out_trans_z, gt_z=gt_z
             )
             loss_dict.update({"loss_z": loss_z})
-        return loss_dict
+        return sum(loss_dict.values()), torch.tensor(list(loss_dict.values()))
 
     def progress_string(self) -> str:
-        return ("\n" + "%11s" * (4 + len(self.loss_names))) % (
+        return ("\n" + "%11s" * (3 + len(self.loss_names))) % (
             "Epoch",
             "GPU_mem",
             "lr",
-            "total",
             *self.loss_names,
         )

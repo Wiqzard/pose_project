@@ -1,10 +1,9 @@
-
 from typing import Optional, Union, List, Tuple, Callable
 import struct
 
 import cv2
 from PIL import Image
-import  numpy as np
+import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -12,50 +11,54 @@ import dill
 
 from utils import LOGGER
 from utils.bbox import Bbox
-from utils.flags import Mode 
+from utils.flags import Mode
 from data_tools.bop_dataset import BOPDataset
 
 
 class DirectDataset(Dataset):
-    def __init__(self, bop_dataset: BOPDataset, cfg=None, transforms=None, mode=None) -> None:
+    def __init__(
+        self, bop_dataset: BOPDataset, cfg=None, transforms=None, mode=None
+    ) -> None:
         super().__init__()
-        #self.reduce = reduce
+        # self.reduce = reduce
         self.reduce = 1
-        #self.mae = mae
-        self.dataset =  bop_dataset
+        # self.mae = mae
+        self.dataset = bop_dataset
         self.transforms = transforms
         self.args = cfg
-        im_H,im_W = self.args.imgsz
+        im_H, im_W = self.args.imgsz
         self.coord_2d = get_2d_coord_np(im_W, im_H, low=0, high=1).transpose(1, 2, 0)
         self.model_points = None
+        self.sym_infos = {
+            k: torch.from_numpy(v)
+            for k, v in self.dataset.generate_symmetries().items()
+        }
 
-        #self.augmentator = None
-        #if self.cfg.DATASET.AUGMENT.AUG_TRAIN and flag == Flag.TRAIN and not mae:
+        # self.augmentator = None
+        # if self.cfg.DATASET.AUGMENT.AUG_TRAIN and flag == Flag.TRAIN and not mae:
         #    self._set_augmentator()
-        
-        
-        
-#    def _set_augmentator(self) -> Augmentator:
-#        aug_cfg = self.cfg.DATASET.AUGMENT
-#        augmentator = Augmentator(imgsz=self.cfg.DATASET.IMG_RES)
-#        augmentator.add_box_augementator(
-#            p=aug_cfg.BOX_AUG.P, dist_type=DistType.UNIFORM, sigma=aug_cfg.BOX_AUG.SIGMA
-#        )
-#        augmentator.add_color_augmentator(
-#            p=aug_cfg.COLOR_AUG.P, aug_code=aug_cfg.COLOR_AUG.CODE
-#        )
-#        if bg_path := aug_cfg.BG_AUG.BG_PATH and aug_cfg.BG_AUG.P > 0:
-#            augmentator.add_bg_augmentator(
-#                p=aug_cfg.BG_AUG.P,
-#                bg_path=bg_path,
-#                im_H=self.cfg.DATASET.IMG_RES[0],
-#                im_W=self.cfg.DATASET.IMG_RES[1],
-#                truncate_fg=aug_cfg.BG_AUG.TRUNCATE_FG,
-#            )
-#        augmentator.add_mask_augmentator(p=aug_cfg.MASK_AUG.P)
-#        augmentator.build()
-#        self.augmentator = augmentator
-#        return augmentator
+
+    #    def _set_augmentator(self) -> Augmentator:
+    #        aug_cfg = self.cfg.DATASET.AUGMENT
+    #        augmentator = Augmentator(imgsz=self.cfg.DATASET.IMG_RES)
+    #        augmentator.add_box_augementator(
+    #            p=aug_cfg.BOX_AUG.P, dist_type=DistType.UNIFORM, sigma=aug_cfg.BOX_AUG.SIGMA
+    #        )
+    #        augmentator.add_color_augmentator(
+    #            p=aug_cfg.COLOR_AUG.P, aug_code=aug_cfg.COLOR_AUG.CODE
+    #        )
+    #        if bg_path := aug_cfg.BG_AUG.BG_PATH and aug_cfg.BG_AUG.P > 0:
+    #            augmentator.add_bg_augmentator(
+    #                p=aug_cfg.BG_AUG.P,
+    #                bg_path=bg_path,
+    #                im_H=self.cfg.DATASET.IMG_RES[0],
+    #                im_W=self.cfg.DATASET.IMG_RES[1],
+    #                truncate_fg=aug_cfg.BG_AUG.TRUNCATE_FG,
+    #            )
+    #        augmentator.add_mask_augmentator(p=aug_cfg.MASK_AUG.P)
+    #        augmentator.build()
+    #        self.augmentator = augmentator
+    #        return augmentator
 
     def __len__(self) -> int:
         return self.dataset.length() // self.reduce
@@ -68,7 +71,7 @@ class DirectDataset(Dataset):
             "bbox": None,
             "roi_coord_2d": None,
             "cams": None,
-            #"roi_cams": None,
+            # "roi_cams": None,
             "roi_centers": None,
             "roi_wh": None,
             "resize_ratios": None,
@@ -76,11 +79,10 @@ class DirectDataset(Dataset):
         gt_data = {
             "gt_pose": None,
             "trans_ratio": None,
-           # "roi_extents": None,
+            # "roi_extents": None,
         }
         imgsz = self.args.imgsz
         input_res = self.args.inp_size
-        
 
         img_path = self.dataset.get_img_path(idx)
         img = cv2.imread(str(img_path))
@@ -90,13 +92,13 @@ class DirectDataset(Dataset):
         else:
             bboxs = self.dataset.get_bbox_visibs(idx)
         bbox = Bbox.from_xywh(bboxs[0])
-#        if self.augmentator:
-#            _, _, bboxs = self.augmentator(bbox=bboxs)
+        #        if self.augmentator:
+        #            _, _, bboxs = self.augmentator(bbox=bboxs)
         roi_img = crop_square_resize(
-                img,
-                bbox,
-                input_res,
-            ).astype("uint8")
+            img,
+            bbox,
+            input_res,
+        ).astype("uint8")
 
         if self.transforms is not None:
             roi_img = Image.fromarray(roi_img)  # cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -107,54 +109,50 @@ class DirectDataset(Dataset):
             roi_img = torch.from_numpy(roi_img).float().permute(2, 0, 1)
             roi_img = roi_img / 255.0
 
-      #  if self.augmentator:
-      #      roi_img, mask_trunc, _ = self.augmentator(
-      #          img=roi_img
-      #      )
+        #  if self.augmentator:
+        #      roi_img, mask_trunc, _ = self.augmentator(
+        #          img=roi_img
+        #      )
         # normalize after augmentation !!!
 
-        #roi_img = standard_normalize(roi_img, use_0_255=True)
+        # roi_img = standard_normalize(roi_img, use_0_255=True)
         roi_cls = self.dataset.get_obj_ids(idx)[0]  # List
         roi_coord_2d = self.get_roi_coord_2d(im_res=imgsz, out_res=input_res, bbox=bbox)
 
         cam = self.dataset.get_cam(idx).squeeze()
 
-        #roi_cls = torch.tensor(roi_cls - 1, dtype=torch.int32)
-        #roi_img = torch.from_numpy(roi_img).float()
+        # roi_cls = torch.tensor(roi_cls - 1, dtype=torch.int32)
+        # roi_img = torch.from_numpy(roi_img).float()
         bboxs_tensor = torch.tensor([bbox.xyxy], dtype=torch.int32)
         roi_coord_2d = torch.from_numpy(roi_coord_2d).float()
         cam = torch.from_numpy(cam)
         roi_centers = torch.tensor(bbox.center, dtype=torch.float32)
         roi_wh = torch.tensor([bbox.w, bbox.h], dtype=torch.float32)
 
-#        roi_extents = self.extents[0]  # [idx]
-#        roi_extents = torch.tensor(roi_extents, dtype=torch.float32)
+        #        roi_extents = self.extents[0]  # [idx]
+        #        roi_extents = torch.tensor(roi_extents, dtype=torch.float32)
         resize_ratios = torch.tensor(
             self.args.inp_size / bbox.scale(*self.args.imgsz),
             dtype=torch.float32,
         )
         # deltas
         pose = self.dataset.get_poses(idx)[0]
-        pose[:, 3] = pose[:, 3] / 1000    
+        pose[:, 3] = pose[:, 3] / 1000
         obj_center = self.get_2d_centroid(idx)
         delta_c = obj_center - bbox.center
-        resize_ratio = self.args.inp_size / bbox.scale(
-            *self.args.imgsz
-        )
+        resize_ratio = self.args.inp_size / bbox.scale(*self.args.imgsz)
         z_ratio = pose[-1][-1] / resize_ratio
         trans_ratio = torch.tensor(
             [delta_c[0] / bbox.w, delta_c[1] / bbox.h, z_ratio],
             dtype=torch.float32,
         )
-        roi_points = self.get_model_points(
-            self.args.num_points
-        )[roi_cls - 1]
+        roi_points = self.get_model_points(self.args.num_points)[roi_cls - 1]
         roi_points = torch.tensor(roi_points, dtype=torch.float32)
-        if True: #self.mae:
+        if True:  # self.mae:
             roi_img = torch.cat([roi_img, roi_coord_2d], dim=0)
 
-        sym_info = [False]
-        sym_info = torch.tensor(sym_info)
+        # sym_info = self.dataset.symmetries(roi_cls)#models_info[roi_cls.item()]["symmetry_info"]  #se[False]
+        # sym_info = torch.tensor(sym_info)
         input_data["roi_cls"] = roi_cls
         input_data["roi_img"] = roi_img
         input_data["bbox"] = bboxs_tensor
@@ -163,15 +161,14 @@ class DirectDataset(Dataset):
         input_data["roi_centers"] = roi_centers
         input_data["roi_wh"] = roi_wh
         input_data["resize_ratios"] = resize_ratios
-        #input_data["roi_extents"] = roi_extents
+        # input_data["roi_extents"] = roi_extents
 
         gt_data["gt_pose"] = torch.tensor(pose, dtype=torch.float32)
         gt_data["gt_points"] = roi_points
         gt_data["trans_ratio"] = trans_ratio
-        #gt_data["roi_extents"] = roi_extents
-        gt_data["symmetry_info"] = sym_info
+        # gt_data["roi_extents"] = roi_extents
+        # gt_data["symmetry_info"] = sym_info
         return input_data, gt_data
-
 
     def get_2d_centroid(self, idx: int) -> np.ndarray:
         """
@@ -186,7 +183,7 @@ class DirectDataset(Dataset):
         """
         poses = self.dataset.get_poses(idx)[0]
         cam = self.dataset.get_cam(idx)
-        trans = poses[:3, 3]  / 1000  # convert to meters
+        trans = poses[:3, 3] / 1000  # convert to meters
         proj = (cam @ trans.T).T
         proj_2d = proj / proj[2:]
         return proj_2d[:-1]
@@ -223,7 +220,9 @@ class DirectDataset(Dataset):
 
         return roi_imgs
 
-    def get_roi_coord_2d(self, im_res:Tuple[int, int],out_res:int, bbox: Bbox) -> np.ndarray:
+    def get_roi_coord_2d(
+        self, im_res: Tuple[int, int], out_res: int, bbox: Bbox
+    ) -> np.ndarray:
         """Get 2D coordinates of region-of-interest (ROI) based on the input bounding box.
 
         Args:
@@ -284,19 +283,21 @@ class DirectDataset(Dataset):
         Returns:
             A list of dictionaries, each containing information about a single model in the dataset.
         """
-        cache_path = self.dataset.models_root / f"models_{self.dataset.dataset_name}.pkl"
+        cache_path = (
+            self.dataset.models_root / f"models_{self.dataset.dataset_name}.pkl"
+        )
         if self.model_points:
             return self.model_points
 
         if cache_path.exists() and self.dataset.use_cache:
             with open(cache_path, "rb") as f:
-                self.model_points= dill.load(f)
+                self.model_points = dill.load(f)
             return self.model_points
         models = []
         for model_num in self.dataset.model_names:
             model = load_ply(
                 self.dataset.models_root / f"obj_{model_num}.ply",
-                vertex_scale=0.001, #self.scale_to_meter,
+                vertex_scale=0.001,  # self.scale_to_meter,
             )
             model["bbox3d_and_center"] = get_bbox3d_and_center(model["pts"])
             models.append(model)
@@ -373,7 +374,6 @@ def crop_square_resize(
     return roi_img
 
 
-
 def get_2d_coord_np(width, height, low=0, high=1, fmt="CHW", endpoint=False):
     """
     Args:
@@ -394,6 +394,7 @@ def get_2d_coord_np(width, height, low=0, high=1, fmt="CHW", endpoint=False):
     else:
         raise ValueError(f"Unknown format: {fmt}")
     return xy
+
 
 def get_bbox3d_and_center(pts):
     """

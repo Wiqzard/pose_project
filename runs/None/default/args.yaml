@@ -47,7 +47,7 @@ z_type: rel
 trans_type: centroid_z
 rot_type: allo_rot6d
 num_pm_points: 3000
-pm_loss_sym: false
+pm_loss_sym: true
 pm_r_only: true
 pm_disentangle_t: false
 pm_disentangle_z: false

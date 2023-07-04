@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 data/
+runs/
 **/.DS_Store
 # C extensions
 *.so

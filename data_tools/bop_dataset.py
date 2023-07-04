@@ -16,6 +16,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from data_tools.graph_tools.graph import Graph
 from data_tools.input_shapes import _ico_verts0, _ico_faces0, _ico_edges0
+from utils.pose_ops import rotation_matrix
 
 from utils import LOGGER, RANK
 from utils.flags import Mode
@@ -85,6 +86,7 @@ class BOPDataset:
         self.scale_to_meter = 0.001
         self.single_object = single_object
         self.num_points = num_points
+        self.sym_infos = {}
 
         if not self._path.is_dir():
             raise FileNotFoundError(f"Path {self._path} does not exist.")
@@ -380,6 +382,25 @@ class BOPDataset:
         with open(models_info_path, "r") as f:
             models_info = json.load(f)
         return models_info
+    
+    def symmetries(self, model_id: int) -> List[int]:
+        if model_id in self.sym_infos:
+            return self.sym_infos[model_id]
+        model_info = self.models_info[str(model_id)]
+        if "symmetries_discrete" or "symmetris_continous" in model_info:
+            sym_transforms = get_symmetry_transformations(model_info, max_sym_disc_step=0.01)
+            sym_info = np.array([sym["R"] for sym in sym_transforms], dtype=np.float32)
+        else:
+            sym_info = None
+        self.sym_infos[model_id] = sym_info
+        return sym_info
+    
+    def generate_symmetries(self) -> dict[int, np.ndarray]:
+        sym_infos = {}
+        for model_id in range(1, len(self.model_names) + 1):
+            sym_infos[model_id] = self.symmetries(model_id)
+        return sym_infos
+        
 
     def _load_models(self) -> None:
         """
@@ -711,6 +732,56 @@ class BOPDataset:
     def get_graph_init_path(self, idx: int) -> Tuple[np.ndarray]:
         return self._dataset["raw_img_dataset"][idx]["init_graph_path"]
 
+
+def get_symmetry_transformations(model_info, max_sym_disc_step):
+    """Returns a set of symmetry transformations for an object model.
+
+    :param model_info: See files models_info.json provided with the datasets.
+    :param max_sym_disc_step: The maximum fraction of the object diameter which
+      the vertex that is the furthest from the axis of continuous rotational
+      symmetry travels between consecutive discretized rotations.
+    :return: The set of symmetry transformations.
+    """
+    # NOTE: t is in mm, so may need to devide 1000
+    # Discrete symmetries.
+    trans_disc = [{"R": np.eye(3), "t": np.array([[0, 0, 0]]).T}]  # Identity.
+    if "symmetries_discrete" in model_info:
+        for sym in model_info["symmetries_discrete"]:
+            sym_4x4 = np.reshape(sym, (4, 4))
+            R = sym_4x4[:3, :3]
+            t = sym_4x4[:3, 3].reshape((3, 1))
+            trans_disc.append({"R": R, "t": t})
+
+    # Discretized continuous symmetries.
+    trans_cont = []
+    if "symmetries_continuous" in model_info:
+        for sym in model_info["symmetries_continuous"]:
+            axis = np.array(sym["axis"])
+            offset = np.array(sym["offset"]).reshape((3, 1))
+
+            # (PI * diam.) / (max_sym_disc_step * diam.) = discrete_steps_count
+            discrete_steps_count = int(np.ceil(np.pi / max_sym_disc_step))
+
+            # Discrete step in radians.
+            discrete_step = 2.0 * np.pi / discrete_steps_count
+
+            for i in range(1, discrete_steps_count):
+                R = rotation_matrix(i * discrete_step, axis)[:3, :3]
+                t = -(R.dot(offset)) + offset
+                trans_cont.append({"R": R, "t": t})
+
+    # Combine the discrete and the discretized continuous symmetries.
+    trans = []
+    for tran_disc in trans_disc:
+        if len(trans_cont):
+            for tran_cont in trans_cont:
+                R = tran_cont["R"].dot(tran_disc["R"])
+                t = tran_cont["R"].dot(tran_disc["t"]) + tran_cont["t"]
+                trans.append({"R": R, "t": t})
+        else:
+            trans.append(tran_disc)
+
+    return trans
 
 def load_ply(path, vertex_scale=1.0):
     # https://github.com/thodan/sixd_toolkit/blob/master/pysixd/inout.py
