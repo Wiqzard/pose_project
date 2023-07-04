@@ -13,4 +13,6 @@ class BBoxType(Enum):
 class AttentionMode(Enum):
     pass
  
-    
+class DistType(Enum):
+    NORMAL = auto()
+    UNIFORM = auto()

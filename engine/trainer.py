@@ -15,7 +15,7 @@ from torch.optim import lr_scheduler
 from tqdm import tqdm
 
 
-from utils import RANK,ROOT, LOGGER,TQDM_BAR_FORMAT, DEFAULT_CFG, yaml_save, colorstr, callbacks
+from utils import RANK,ROOT, LOGGER,TQDM_BAR_FORMAT, DEFAULT_CFG, yaml_save, colorstr, callbacks, increment_dir
 from utils.cfg_utils import get_cfg, print_args
 from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStopping, generate_ddp_command, ddp_cleanup, one_cycle, strip_optimizer, attempt_load_one_weight
 from utils.checks import check_imgsz, check_file
@@ -49,6 +49,8 @@ class BaseTrainer:
             self.args.save_dir = str(Path(self.args.save_dir) / project / name)
         else:
             self.save_dir = ROOT / "runs" / str(project) / name  
+        self.save_dir = increment_dir(self.save_dir)  # increment run
+        
         self.wdir = self.save_dir / "weights"  # weights dir
         if RANK in (-1, 0):
             self.wdir.mkdir(parents=True, exist_ok=True)  # make dir
@@ -331,8 +333,6 @@ class BaseTrainer:
                             mem,
                             round(lr, 5),
                             *losses,
-                           # batch["cls"].shape[0],
-                           # batch["img"].shape[-1],
                         )
                     )
                     self.run_callbacks("on_batch_end")
@@ -358,7 +358,10 @@ class BaseTrainer:
                 final_epoch = (epoch + 1 == self.epochs) or self.stopper.possible_stop
 
                 if self.args.val or final_epoch:
-                    self.metrics, self.fitness = self.validate()
+                    if self.args.val_period > 0 and (
+                        (epoch + 1) % self.args.val_period == 0 or final_epoch
+                    ):
+                        self.metrics, self.fitness = self.validate()
                 self.save_metrics(
                     metrics={
                         **self.label_loss_items(self.tloss),

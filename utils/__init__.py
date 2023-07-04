@@ -245,6 +245,25 @@ def is_dir_writeable(dir_path: Union[str, Path]) -> bool:
     return os.access(str(dir_path), os.W_OK)
 
 
+
+def increment_dir(directory: Path):
+    """
+    Increment a directory by appending a number to the name, e.g. 'runs/exp' will be incremented to 'runs/exp_1'. 
+    """
+    if directory.is_dir():
+        base_dir_name = re.sub('\d*$', '', directory.name)
+        new_dir = directory.parent / f"{base_dir_name}_1"
+        i = 1
+
+        while new_dir.exists():
+            i += 1
+            new_dir = directory.parent / f"{base_dir_name}_{i}"
+            
+        new_dir.mkdir()
+    else :
+        new_dir = directory
+    return  new_dir
+
 def get_user_config_dir(sub_dir="Ultralytics"):
     """
     Get the user config directory.
@@ -281,7 +300,7 @@ SETTINGS_YAML = USER_CONFIG_DIR / "settings.yaml"
 
 class Profile(contextlib.ContextDecorator):
     """
-    YOLOv8 Profile class.
+    Profile class.
     Usage: as a decorator with @Profile() or as a context manager with 'with Profile():'
     """
 

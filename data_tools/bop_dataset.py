@@ -115,7 +115,6 @@ class BOPDataset:
         start = perf_counter()
         self._load_models()
         end = perf_counter()
-        print(f"Loading models took {end - start} seconds.")
 
         single = "single" if self.single_object else "multi"
         self.cache_path = (
@@ -363,8 +362,8 @@ class BOPDataset:
         else:
             pbar = self.scene_paths
         for i, scene_path in enumerate(pbar):
-            if i > 1:
-                continue
+#            if i > 0:
+#                continue
             scene_dataset = self._create_scene_dataset(scene_path)
             dataset["raw_img_dataset"].extend(scene_dataset)
         return dataset

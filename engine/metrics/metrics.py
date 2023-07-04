@@ -89,7 +89,7 @@ class Metrics:
 
     @property
     def avg_trans_distance(self) -> float:
-        total_trans_distance =sum(sum(trans_list) for trans_list in self.ang_distances_cls.values())
+        total_trans_distance =sum(sum(trans_list) for trans_list in self.trans_distances_cls.values())
         return total_trans_distance / self.num_targets
     
     @property

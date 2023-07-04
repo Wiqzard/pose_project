@@ -15,21 +15,23 @@ data_path:  # path to dataset
 resume:  False # resume training from checkpoint
 epochs: 100  # number of epochs to train for
 patience: 50  # epochs to wait for no observable improvement for early stopping of training
-batch: 16 #48  # number of images per batch (-1 for AutoBatch)
+batch: 87 #16 #48  # number of images per batch (-1 for AutoBatch)
 imgsz: [480, 640]  # size of input images as integer or w,h
 inp_size: 224
-device: 0 #,1,2 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
+device: 0,1,2 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
 save: True  # save train checkpoints and predict results
 save_period: -1 # Save checkpoint every x epochs (disabled if < 1)
 optimizer: AdamW  # (str) optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]
 verbose: True  # (bool) whether to print verbose output
 cos_lr: False  # (bool) use cosine learning rate scheduler
-workers: 1 #8  # (int) number of worker threads for data loading (per RANK if DDP)
+workers: 32  # (int) number of worker threads for data loading (per RANK if DDP)
 plots: True  # (bool) plot training results
 shuffle: True # (bool) shuffle dataset 
 
 # Val/Test settings ----------------------------------------------------------------------------------------------------
 val: True  # (bool) validate/test during training
+val_period: 1  # (int) epochs between validation runs
+save_csv: False # (bool) save a .csv file of results
 split: val  # (str) dataset split to use for validation, i.e. 'val', 'test' or 'train'
 save_json: False  # (bool) save results to JSON file
 save_hybrid: False  # (bool) save hybrid version of labels (labels + additional predictions)
@@ -72,15 +74,11 @@ pm_disentangle_t: false  # disentangle r/t
 pm_disentangle_z: false  # disentangle r/xy/z
 pm_t_use_points: true
 pm_lw: 1.0 # (float) weight for poit matching loss
-
 rot_loss_type: "angular"  # angular | l2
 rot_lw: 0.0 # (float) weight for angular loss
-
 trans_lw: 0.0 # (flaot) weight for translation loss
-
 centroid_loss_type: "l1" # l1 | l2 | mse
 centroid_lw: 1.0 # (float) weight for centroid loss
-
 z_loss_type: "l1" # l1 | l2 | mse
 z_lw: 1.0 # (float) weight for z loss
 

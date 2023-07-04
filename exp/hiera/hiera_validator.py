@@ -1,12 +1,13 @@
 from typing import Any, Union
-
+import csv
 from pathlib import Path
+
 import numpy as np
 import torch
-
 from torch.utils.data import DataLoader
 
 from utils import LOGGER
+from utils.flags import Mode
 from engine.metrics import Metrics
 from engine.validator import BaseValidator
 from utils.pose_ops import pose_from_pred, pose_from_pred_centroid_z, get_rot_mat
@@ -19,6 +20,7 @@ from engine.losses.losses import (
     compute_trans_loss,
 )
 from data_tools.direct_dataset import  DirectDataset
+from data_tools.bop_dataset import BOPDataset
 #from utils.annotator.annotator import Annotator
 
 class HIERAValidator(BaseValidator):
@@ -89,15 +91,9 @@ class HIERAValidator(BaseValidator):
         preds = {k: v.detach() for k, v in preds.items()}
         batch = {k: v.detach() for k, v in [*input_data[0].items(), *input_data[1].items()] if k != "roi_img"}
         batch["sym_infos"] =  [self.testset.sym_infos[obj_id_.item()].to(self.device) for obj_id_ in batch["roi_cls"]]
-        #batch.update(input_data[1])
         return preds, batch
 
-
-    #def init_metrics(self, model):
     def init_metrics(self):
-        #self.names = model.names
-        #self.nc = len(model.names)
-        #self.metrics.names = self.names
         self.seen = 0
         self.jdict = []
         self.stats = []
@@ -123,6 +119,7 @@ class HIERAValidator(BaseValidator):
         self.metrics.update(loss,  preds, input_data)
         bs = input_data["roi_cls"].shape[0]
         self.seen += bs
+        self.speed  = 0
 
 
     def finalize_metrics(self, *args, **kwargs):
@@ -156,42 +153,8 @@ class HIERAValidator(BaseValidator):
                     )
                 )
 
-    def save_evaluation_csv(self, preds, input_data, gt_data, si) -> None:
-        """Save evaluation results to a csv file."""
-        if self.cfg.SAVE_VAL:
-            save_dir = Path(self.cfg.SAVE_DIR)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            csv_path = save_dir / "eval_results.csv"
-
             # self.metrics.save_results_csv(csv_path)
 
-    def get_dataloader(self, flag):
-        return_oimg = self.cfg.SAVE_VIDEO and not self.training
-        dataset = BMW_Dataset(
-            cfg=self.cfg, path=self.cfg.DATASET_ROOT, flag=flag, reduce=1, return_oimg=return_oimg
-        )
-        dataloader = DataLoader(
-            dataset=dataset,
-            batch_size=self.cfg.SOLVER.IMS_PER_BATCH,
-            shuffle=False,
-            num_workers=16,
-        )
-        return dataloader
-
-    def setup_annotator(
-        self, width, height, vis_masks=False, vis_poses=False, models_path=None
-    ):
-        # vis_orig_color=False for estimated poses?
-        self.annotator = Annotator(
-            width,
-            height,
-            vis_masks=vis_masks,
-            vis_poses=vis_poses,
-            models_path=models_path,
-            vis_orig_color=False,
-        )  # vis_poses=self.cfg.VIS_POSES)
-
-        
     def criterion(self, pred: dict, gt: dict) -> dict:
         out_rot = pred["rot"]
         out_trans = pred["trans"]
@@ -243,3 +206,83 @@ class HIERAValidator(BaseValidator):
             )
             loss_dict.update({"loss_z": loss_z})
         return sum(loss_dict.values()), torch.tensor(list(loss_dict.values()), device=self.device, requires_grad=False)
+
+    def get_dataset(
+        self, img_path, mode=Mode.TEST, use_cache=True, single_object=True
+    ):
+        return BOPDataset(img_path, mode, use_cache=True, single_object=True)
+
+    def get_dataloader(self, mode):
+        #return_oimg = self.cfg.SAVE_VIDEO and not self.training
+        dataset = self.get_dataset(
+            dataset_path=self.args.dataset_path, use_cache=True, mode=mode
+        )
+        dataset = DirectDataset(
+            bop_dataset=dataset, cfg=self.args, transforms=None
+        )
+        dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=self.args.bs,
+            shuffle=False,
+            num_workers=16,
+        )
+        return dataloader
+
+
+   
+
+    def save_evaluation_csv(self, preds, input_data, gt_data, si) -> None:
+        """Save evaluation results to a csv file."""
+        if self.cfg.SAVE_VAL:
+            save_dir = Path(self.cfg.SAVE_DIR)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = save_dir / "eval_results.csv"
+
+
+    def save_csv(self, preds, batch, dt):
+        bs = batch["roi_cls"].shape[0]
+        time = dt[0] + dt[1] + dt[2]  / bs
+        for i in range(bs):
+            R = preds["rot"][i].cpu().numpy()
+            trans = preds["trans"].cpu().numpy()
+
+
+    def write_bop_results(
+        self,
+        scene_id: int,
+        img_id: int,
+        obj_id: int,
+        score: float,
+        time: float,
+        R: list[float],
+        t: list[float],
+    ) -> None:
+        """Write BOP results to a file."""
+        if not self.csv_path.exists():
+            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+            header = ["scene_id", "im_id", "obj_id", "score", "R", "t", "time"]
+            with open(self.csv_path, mode="w+", newline="") as csv_file:
+                writer = csv.writer(csv_file, delimiter=",")
+                writer.writerow(header)
+        with open(self.csv_path, mode="a", newline="") as csv_file:
+            writer = csv.writer(
+                csv_file,
+                delimiter=",",
+            )
+            R = " ".join(str(item) for item in R)
+            t = " ".join(str(item) for item in t)
+            writer.writerow(
+                [int(scene_id), int(img_id), int(obj_id), score, R, t, time]
+            )
+    def setup_annotator(
+        self, width, height, vis_masks=False, vis_poses=False, models_path=None
+    ):
+        # vis_orig_color=False for estimated poses?
+        self.annotator = Annotator(
+            width,
+            height,
+            vis_masks=vis_masks,
+            vis_poses=vis_poses,
+            models_path=models_path,
+            vis_orig_color=False,
+        )  # vis_poses=self.cfg.VIS_POSES)

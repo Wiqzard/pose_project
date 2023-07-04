@@ -17,7 +17,7 @@ def main() -> int:
     os.environ["MASTER_ADDR"] = "localhost"
     #if len(args.gpus) == 1:
     #    os.environ["MASTER_PORT"] = "29500"
-    #os.environ["OMP_NUM_THREADS"] = "32"
+    os.environ["OMP_NUM_THREADS"] = "32"
     cfg = get_cfg("/home/bmw/Documents/Sebastian/pose_project/configs/direct_method.yaml")
     trainer = HIERATrainer(cfg) 
     trainer.train()

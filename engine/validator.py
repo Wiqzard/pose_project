@@ -187,9 +187,10 @@ class BaseValidator:
                     self.loss += self.criterion(preds, batch)[1]
 
             self.update_metrics(preds, batch)
+            if self.args.save_csv:
+                self.save_csv(preds, batch, dt)
             self.run_callbacks("on_val_batch_end")
-#        stats = self.get_stats()
-#        self.check_stats(stats)
+
         self.speed = dict(
             zip(
                 self.speed.keys(),
@@ -251,24 +252,12 @@ class BaseValidator:
         """Describes and summarizes the purpose of 'postprocess()' but no details mentioned."""
         return preds
 
-    def init_metrics(self, model):
+    def init_metrics(self):
         """Initialize performance metrics for the YOLO model."""
         pass
 
     def update_metrics(self, preds, batch):
         """Updates metrics based on predictions and batch."""
-        pass
-
-    def finalize_metrics(self, *args, **kwargs):
-        """Finalizes and returns all metrics."""
-        pass
-
-    def get_stats(self):
-        """Returns statistics about the model's performance."""
-        return {}
-
-    def check_stats(self, stats):
-        """Checks statistics."""
         pass
 
     def print_results(self):
@@ -281,7 +270,7 @@ class BaseValidator:
 
     @property
     def metric_keys(self):
-        """Returns the metric keys used in YOLO training/validation."""
+        """Returns the metric keys used in training/validation."""
         return []
 
     # TODO: may need to put these following functions into callback
@@ -290,13 +279,9 @@ class BaseValidator:
         pass
 
     def plot_predictions(self, batch, preds, ni):
-        """Plots YOLO model predictions on batch images."""
+        """Plots model predictions on batch images."""
         pass
-
-    def pred_to_json(self, preds, batch):
-        """Convert predictions to JSON format."""
-        pass
-
-    def eval_json(self, stats):
-        """Evaluate and return JSON format of prediction statistics."""
+    
+    def save_csv(self, preds, batch, dt):
+        """Saves predictions in bop format to csv file."""
         pass

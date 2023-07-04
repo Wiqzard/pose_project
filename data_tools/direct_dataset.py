@@ -11,9 +11,9 @@ import dill
 
 from utils import LOGGER
 from utils.bbox import Bbox
-from utils.flags import Mode
+from utils.flags import Mode, DistType
 from data_tools.bop_dataset import BOPDataset
-
+from data_tools.augmentations.augmentator import Augmentator
 
 class DirectDataset(Dataset):
     def __init__(
@@ -34,31 +34,31 @@ class DirectDataset(Dataset):
             for k, v in self.dataset.generate_symmetries().items()
         }
 
-        # self.augmentator = None
-        # if self.cfg.DATASET.AUGMENT.AUG_TRAIN and flag == Flag.TRAIN and not mae:
+        self.augmentator = None
+        #if self.cfg.DATASET.AUGMENT.AUG_TRAIN and mode == Mode.TRAIN:
         #    self._set_augmentator()
 
-    #    def _set_augmentator(self) -> Augmentator:
-    #        aug_cfg = self.cfg.DATASET.AUGMENT
-    #        augmentator = Augmentator(imgsz=self.cfg.DATASET.IMG_RES)
-    #        augmentator.add_box_augementator(
-    #            p=aug_cfg.BOX_AUG.P, dist_type=DistType.UNIFORM, sigma=aug_cfg.BOX_AUG.SIGMA
-    #        )
-    #        augmentator.add_color_augmentator(
-    #            p=aug_cfg.COLOR_AUG.P, aug_code=aug_cfg.COLOR_AUG.CODE
-    #        )
-    #        if bg_path := aug_cfg.BG_AUG.BG_PATH and aug_cfg.BG_AUG.P > 0:
-    #            augmentator.add_bg_augmentator(
-    #                p=aug_cfg.BG_AUG.P,
-    #                bg_path=bg_path,
-    #                im_H=self.cfg.DATASET.IMG_RES[0],
-    #                im_W=self.cfg.DATASET.IMG_RES[1],
-    #                truncate_fg=aug_cfg.BG_AUG.TRUNCATE_FG,
-    #            )
-    #        augmentator.add_mask_augmentator(p=aug_cfg.MASK_AUG.P)
-    #        augmentator.build()
-    #        self.augmentator = augmentator
-    #        return augmentator
+    def _set_augmentator(self) -> Augmentator:
+            aug_cfg = self.cfg.DATASET.AUGMENT
+            augmentator = Augmentator(imgsz=self.cfg.DATASET.IMG_RES)
+            augmentator.add_box_augementator(
+                p=aug_cfg.BOX_AUG.P, dist_type=DistType.UNIFORM, sigma=aug_cfg.BOX_AUG.SIGMA
+            )
+            augmentator.add_color_augmentator(
+                p=aug_cfg.COLOR_AUG.P, aug_code=aug_cfg.COLOR_AUG.CODE
+            )
+            if bg_path := aug_cfg.BG_AUG.BG_PATH and aug_cfg.BG_AUG.P > 0:
+                augmentator.add_bg_augmentator(
+                    p=aug_cfg.BG_AUG.P,
+                    bg_path=bg_path,
+                    im_H=self.cfg.DATASET.IMG_RES[0],
+                    im_W=self.cfg.DATASET.IMG_RES[1],
+                    truncate_fg=aug_cfg.BG_AUG.TRUNCATE_FG,
+                )
+            augmentator.add_mask_augmentator(p=aug_cfg.MASK_AUG.P)
+            augmentator.build()
+            self.augmentator = augmentator
+            return augmentator
 
     def __len__(self) -> int:
         return self.dataset.length() // self.reduce
@@ -92,8 +92,8 @@ class DirectDataset(Dataset):
         else:
             bboxs = self.dataset.get_bbox_visibs(idx)
         bbox = Bbox.from_xywh(bboxs[0])
-        #        if self.augmentator:
-        #            _, _, bboxs = self.augmentator(bbox=bboxs)
+        if self.augmentator:
+            _, _, bboxs = self.augmentator(bbox=bboxs)
         roi_img = crop_square_resize(
             img,
             bbox,
@@ -109,10 +109,10 @@ class DirectDataset(Dataset):
             roi_img = torch.from_numpy(roi_img).float().permute(2, 0, 1)
             roi_img = roi_img / 255.0
 
-        #  if self.augmentator:
-        #      roi_img, mask_trunc, _ = self.augmentator(
-        #          img=roi_img
-        #      )
+        if self.augmentator:
+              roi_img, mask_trunc, _ = self.augmentator(
+                  img=roi_img
+        )
         # normalize after augmentation !!!
 
         # roi_img = standard_normalize(roi_img, use_0_255=True)
