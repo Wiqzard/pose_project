@@ -38,7 +38,6 @@ class HIERAValidator(BaseValidator):
             batch_gt = {
                 k: v.to(self.device, non_blocking=True) for k, v in batch_gt.items()
             }
-            batch_gt["symm_infos"] =  [self.testset.sym_infos[obj_id_].to(self.device) for obj_id_ in batch_in["roi_cls"]]
             batch = (batch_in, batch_gt)
         elif isinstance(batch, dict):
             batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
@@ -89,6 +88,7 @@ class HIERAValidator(BaseValidator):
         # add .cpu() to avoid memory leak 
         preds = {k: v.detach() for k, v in preds.items()}
         batch = {k: v.detach() for k, v in [*input_data[0].items(), *input_data[1].items()] if k != "roi_img"}
+        batch["sym_infos"] =  [self.testset.sym_infos[obj_id_.item()].to(self.device) for obj_id_ in batch["roi_cls"]]
         #batch.update(input_data[1])
         return preds, batch
 
@@ -202,7 +202,7 @@ class HIERAValidator(BaseValidator):
         gt_rot = gt["gt_pose"][:, :3, :3]
         gt_trans_ratio = gt["trans_ratio"]
         gt_points = gt["gt_points"]
-        sym_infos = gt["symmetry_info"]
+        sym_infos = gt["sym_infos"]
         #extents = gt["roi_extents"]
         loss_dict = {}
         if self.args.pm_lw > 0:

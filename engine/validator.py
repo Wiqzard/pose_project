@@ -61,6 +61,7 @@ class BaseValidator:
             args (SimpleNamespace): Configuration for the validator.
         """
         self.dataloader = dataloader
+        self.testset = dataloader.dataset
         self.pbar = pbar
         self.args = args or get_cfg(DEFAULT_CFG)
         self.model = None

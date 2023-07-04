@@ -9,12 +9,12 @@ data_path: null
 resume: false
 epochs: 100
 patience: 50
-batch: 32
+batch: 16
 imgsz:
 - 480
 - 640
 inp_size: 224
-device: 1
+device: 0
 save: true
 save_period: -1
 optimizer: AdamW
@@ -33,13 +33,13 @@ dnn: false
 source: null
 show: false
 save_txt: false
-lr0: 0.01
-lrf: 0.01
+lr0: 0.001
+lrf: 0.001
 momentum: 0.937
 weight_decay: 0.0005
 warmup_epochs: 3.0
 warmup_momentum: 0.8
-warmup_bias_lr: 0.1
+warmup_bias_lr: 0.001
 nbs: 64
 use_obj_bbox: true
 num_points: 9000

@@ -21,6 +21,8 @@ from utils.torch_utils import select_device, ModelEMA, de_parallel, EarlyStoppin
 from utils.checks import check_imgsz, check_file
 from utils.flags import Mode 
 
+from engine import callbacks
+
 class BaseTrainer:
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
         """

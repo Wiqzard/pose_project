@@ -117,10 +117,11 @@ class BOPDataset:
         end = perf_counter()
         print(f"Loading models took {end - start} seconds.")
 
+        single = "single" if self.single_object else "multi"
         self.cache_path = (
             Path.cwd()
             / ".cache"
-            / f"dataset_{self.dataset_name}_{self.mode.name.lower()}.pkl"
+            / f"dataset_{self.dataset_name}_{self.mode.name.lower()}_{single}.pkl"
         )
         if use_cache and self.cache_path.is_file():
             self._load_cache()
@@ -130,7 +131,7 @@ class BOPDataset:
                 )
         else:
             self._dataset = self._create_dataset()
-            # self._dataset_to_single_view() if single_object else None
+            self._dataset_to_single_view() if single_object else None
             self._cache()
 
     def _load_cache(self) -> None:
@@ -189,13 +190,10 @@ class BOPDataset:
         single_raw_img_dataset = []
         for entry in tqdm(raw_img_dataset):
             annotation = entry["annotation"]
-            for key, value in annotation.items():
-                for i in range(len(value)):
-                    new_annotation = annotation.copy()
-                    new_annotation[key] = [value[i]]
-                    entry.update({"annotation": new_annotation})
-                    single_raw_img_dataset.append(entry)
-
+            for i in range(len(annotation["obj_id"])):
+                entry_c  = copy.deepcopy(entry)
+                entry_c["annotation"] = {k:[v[i]] for k,v in annotation.items() }
+                single_raw_img_dataset.append(entry_c)
         self._dataset["raw_img_dataset"] = single_raw_img_dataset
         self._dataset.update({"single_object": self.single_object})
 
@@ -262,23 +260,26 @@ class BOPDataset:
             graph_path = str(
                 scene_root / "graphs" / f"{int(str_im_id):06d}_{int(anno_i):06d}.npz"
             )
-
-            annotations["obj_id"].append(obj_id)
-            annotations["bbox_obj"].append(bbox_obj)
-            annotations["bbox_visib"].append(bbox_visib)
-            annotations["pose"].append(pose)
-            annotations["mask_path"].append(mask_path)
-            annotations["mask_visib_path"].append(mask_visib_path)
-            annotations["graph_path"].append(graph_path)
-
-        # if bbox_visib only zeros return None
-        if (
-            np.sum(annotations["bbox_obj"][0]) == 0
-            or np.sum(annotations["bbox_visib"][0]) == 0
-            or np.any(np.array(annotations["bbox_visib"]) < 0)
-            or np.any(np.array(annotations["bbox_obj"]) <0)
-        ):
-            return None
+            # if bbox_visib only zeros return None
+            if not (
+                np.sum(bbox_obj) == 0
+                or np.sum(bbox_visib) == 0
+                or np.any(bbox_visib < 0)
+                or np.any(bbox_obj < 0)
+            ):
+#            if not (
+#                np.sum(annotations["bbox_obj"][0]) == 0
+#                or np.sum(annotations["bbox_visib"][0]) == 0
+#                or np.any(np.array(annotations["bbox_visib"]) < 0)
+#                or np.any(np.array(annotations["bbox_obj"]) <0)
+#            ):
+                annotations["obj_id"].append(obj_id)
+                annotations["bbox_obj"].append(bbox_obj)
+                annotations["bbox_visib"].append(bbox_visib)
+                annotations["pose"].append(pose)
+                annotations["mask_path"].append(mask_path)
+                annotations["mask_visib_path"].append(mask_visib_path)
+                annotations["graph_path"].append(graph_path)
         return annotations
 
     def _create_scene_dataset(self, scene_root: Path) -> Optional[List[Dict[str, Any]]]:

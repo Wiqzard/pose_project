@@ -15,10 +15,10 @@ data_path:  # path to dataset
 resume:  False # resume training from checkpoint
 epochs: 100  # number of epochs to train for
 patience: 50  # epochs to wait for no observable improvement for early stopping of training
-batch: 32  # number of images per batch (-1 for AutoBatch)
+batch: 16 #48  # number of images per batch (-1 for AutoBatch)
 imgsz: [480, 640]  # size of input images as integer or w,h
 inp_size: 224
-device: 1 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
+device: 0 #,1,2 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
 save: True  # save train checkpoints and predict results
 save_period: -1 # Save checkpoint every x epochs (disabled if < 1)
 optimizer: AdamW  # (str) optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]
@@ -43,13 +43,13 @@ show: False  # (bool) show results if possible
 save_txt: False  # (bool) save results as .txt file
 
 # Hyperparameters ------------------------------------------------------------------------------------------------------
-lr0: 0.01  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
-lrf: 0.01  # (float) final learning rate (lr0 * lrf)
+lr0: 0.001  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
+lrf: 0.001  # (float) final learning rate (lr0 * lrf)
 momentum: 0.937  # (float) SGD momentum/Adam beta1
 weight_decay: 0.0005  # (float) optimizer weight decay 5e-4
 warmup_epochs: 3.0  # (float) warmup epochs (fractions ok)
 warmup_momentum: 0.8  # (float) warmup initial momentum
-warmup_bias_lr: 0.1  # (float) warmup initial bias lr
+warmup_bias_lr: 0.001  # (float) warmup initial bias lr
 nbs: 64  # (int) nominal batch size
 
 

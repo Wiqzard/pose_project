@@ -53,7 +53,6 @@ class HIERATrainer(BaseTrainer):
             batch_gt = {
                 k: v.to(self.device, non_blocking=True) for k, v in batch_gt.items()
             }
-            batch_gt["sym_infos"] =  [self.trainset.sym_infos[obj_id_.item()].to(self.device) for obj_id_ in batch_in["roi_cls"]]
             batch = (batch_in, batch_gt)
         elif isinstance(batch, dict):
             batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
@@ -101,6 +100,7 @@ class HIERATrainer(BaseTrainer):
 
         preds = {"rot": pred_ego_rot, "trans": pred_trans, "pred_t_": pred_t_}
         batch = {k: v for k, v in input_data[0].items() if k != "roi_img"}
+        batch["sym_infos"] =  [self.trainset.sym_infos[obj_id_.item()].to(self.device) for obj_id_ in batch["roi_cls"]]
         batch.update(input_data[1])
         return preds, batch
 
