@@ -28,9 +28,13 @@ try:
     import thop
 except ImportError:
     thop = None
-from utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER,  RANK, VERSION , PIN_MEMORY, emojis
+from utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER,  RANK, VERSION , PIN_MEMORY, emojis, check_version
 from utils.checks import check_suffix
-
+TORCHVISION_0_10 = check_version(torchvision.__version__, '0.10.0')
+TORCH_1_9 = check_version(torch.__version__, '1.9.0')
+TORCH_1_11 = check_version(torch.__version__, '1.11.0')
+TORCH_1_12 = check_version(torch.__version__, '1.12.0')
+TORCH_2_0 = check_version(torch.__version__, minimum='2.0')#
 
 
 def select_device(device='', batch=0, newline=False, verbose=True):
@@ -479,3 +483,9 @@ class ModelWrapper(nn.Module):
         self.model.load_state_dict(csd, strict=False)
         if verbose:
             print(f'Transferred {len(csd)}/{len(self.model.state_dict())} items from pretrained weights')
+
+def clear_cuda_memory() -> None:
+    if TORCH_2_0:
+        # https://github.com/pytorch/pytorch/issues/95668
+        torch._C._cuda_clearCublasWorkspaces()
+    torch.cuda.empty_cache()

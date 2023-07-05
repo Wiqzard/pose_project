@@ -362,8 +362,8 @@ class BOPDataset:
         else:
             pbar = self.scene_paths
         for i, scene_path in enumerate(pbar):
-#            if i > 0:
-#                continue
+            if i > 0:
+                continue
             scene_dataset = self._create_scene_dataset(scene_path)
             dataset["raw_img_dataset"].extend(scene_dataset)
         return dataset
@@ -659,9 +659,13 @@ class BOPDataset:
     @require_dataset
     def __len__(self):
         return len(self._dataset["raw_img_dataset"])
-
     
 
+    @require_dataset
+    def get_metadata(self, idx: int) -> Dict[str, Any]:
+        return {"scene_id": self._dataset["raw_img_dataset"][idx]["scene_id"], "img_id":self._dataset["raw_img_dataset"][idx]["img_id"]}
+    
+     
     @require_dataset
     def get_obj_ids(self, idx: int) -> List[int]:
         return self._dataset["raw_img_dataset"][idx]["annotation"]["obj_id"]

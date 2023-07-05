@@ -8,17 +8,18 @@ dataset_path: /home/bmw/Documents/limemod/lm # path to dataset
 debug: True # (bool) enable debug mode
 
 # Train settings -------------------------------------------------------------------------------------------------------
-project:  # project name
-name: "default"
+project: test # project name
+name: default
 model:  # path to model file, i.e. yolov8n.pt, yolov8n.yaml
 data_path:  # path to dataset
 resume:  False # resume training from checkpoint
+reduce: 1 # (int) factor by which to reduce the samples in training set
 epochs: 100  # number of epochs to train for
 patience: 50  # epochs to wait for no observable improvement for early stopping of training
 batch: 87 #16 #48  # number of images per batch (-1 for AutoBatch)
 imgsz: [480, 640]  # size of input images as integer or w,h
 inp_size: 224
-device: 0,1,2 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
+device: 1,2,3 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
 save: True  # save train checkpoints and predict results
 save_period: -1 # Save checkpoint every x epochs (disabled if < 1)
 optimizer: AdamW  # (str) optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]

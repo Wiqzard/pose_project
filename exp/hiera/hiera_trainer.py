@@ -118,7 +118,7 @@ class HIERATrainer(BaseTrainer):
                 dataset = self.get_dataset(
                     dataset_path, mode=Mode.TRAIN, use_cache=True, single_object=True
                 )
-                dataset = DirectDataset(bop_dataset=dataset, cfg=self.args, transforms=self.transforms)
+                dataset = DirectDataset(bop_dataset=dataset, cfg=self.args, transforms=self.transforms, reduce=self.args.reduce)
                 self.trainset = dataset
             else:
                 dataset = self.trainset
@@ -127,7 +127,7 @@ class HIERATrainer(BaseTrainer):
                 dataset = self.get_dataset(
                     dataset_path, mode=Mode.TEST, use_cache=True, single_object=True
                 )
-                dataset = DirectDataset(bop_dataset=dataset, cfg=self.args, transforms=self.transforms)
+                dataset = DirectDataset(bop_dataset=dataset, cfg=self.args, transforms=self.transforms, reduce=self.args.reduce)
                 self.testset = dataset
             else:
                 dataset = self.testset

@@ -12,8 +12,10 @@ import torch
 from torch import nn
 import numpy as np
 
-from engine.losses.rot_loss import angular_distance
+from utils.flags import MetricType
 
+from engine.losses.rot_loss import angular_distance
+from engine.losses.add import calc_translation_error_batch, calc_rotation_error_batch, add_batch, adi_batch 
 
 @dataclass
 class Metrics:
@@ -21,10 +23,10 @@ class Metrics:
 
     args: None 
     losses: list[float] = field(default_factory=list)
-   # ang_distances: list[float] = field(default_factory=list)
-   # trans_distances: list[float] = field(default_factory=list)
     ang_distances_cls: dict[int, list[float]] = field(default_factory=dict)
     trans_distances_cls: dict[int, list[float]] = field(default_factory=dict)
+    add_cls: list[float] = field(default_factory=list)
+    adi_cls: list[float] = field(default_factory=list)
 
     def update(
         self,
@@ -34,21 +36,21 @@ class Metrics:
     ) -> None:
         """Update the metrics with new data."""
 
-        # loss_items = {k: v.clone().detach() for k, v in loss_dict.items()}
         obj_id = input_data["roi_cls"]
         total_loss = sum(loss)
 
-        pred_rot = preds["rot"]
-        pred_trans = preds["trans"]  # pred_t_ (bs, 3)
+        pred_rot = preds["rot"].cpu().numpy()
+        pred_trans = preds["trans"].cpu().numpy()  # pred_t_ (bs, 3)
 
-        gt_rot = input_data["gt_pose"][:, :3, :3]
-        gt_trans = input_data["gt_pose"][:, :3, 3]
+        gt_rot = input_data["gt_pose"][:, :3, :3].cpu().numpy()
+        gt_trans = input_data["gt_pose"][:, :3, 3].cpu().numpy()
 
-        ang_distance = angular_distance(pred_rot, gt_rot)  # mean of batch
-        eucl_distance = torch.norm(
-            (pred_trans - gt_trans), p=2, dim=1
-        )#.mean()  # mean of batch
+        pts = input_data["gt_points"].cpu().numpy()
 
+        ang_distance = calc_rotation_error_batch(pred_rot, gt_rot)  # mean of batch
+        eucl_distance = calc_translation_error_batch(pred_trans, gt_trans)
+       # add = add_batch(pred_rot, pred_trans, gt_rot, gt_trans, pts)
+       # adi = adi_batch(pred_rot, pred_trans, gt_rot, gt_trans, pts) 
         self.losses.append(total_loss.item())
 
         for i, obj in enumerate(obj_id):
@@ -57,8 +59,14 @@ class Metrics:
                 self.ang_distances_cls[obj] = []
             if obj not in self.trans_distances_cls:
                 self.trans_distances_cls[obj] = []
+       #     if obj not in self.add_cls:
+       #         self.add_cls[obj] = []
+       #     if obj_id not in self.adi_cls:
+       #         self.adi_cls[obj] = []
             self.ang_distances_cls[obj].append(ang_distance[i].item())
             self.trans_distances_cls[obj].append(eucl_distance[i].item())
+       #     self.add_cls[obj].append(add[i].item())
+       #     self.adi_cls[obj].append(adi[i].item())
 
     
     def reset(self) -> None:
@@ -91,6 +99,15 @@ class Metrics:
     def avg_trans_distance(self) -> float:
         total_trans_distance =sum(sum(trans_list) for trans_list in self.trans_distances_cls.values())
         return total_trans_distance / self.num_targets
+    @property
+    def avg_add(self) -> float:
+        total_add = sum(self.add_cls)
+        return total_add / self.num_targets
+    
+    @property
+    def avg_adi(self) -> float:
+        total_adi = sum(self.adi_cls)
+        return total_adi / self.num_targets
     
     @property
     def avg_trans_distance_cls(self) -> dict[int, float]:
@@ -99,6 +116,15 @@ class Metrics:
     @property
     def avg_ang_distance_cls(self) -> dict[int, float]:
         return {k: sum(v) for k, v in self.ang_distances_cls.items()}
+    
+    @property
+    def avg_add_cls(self) -> dict[int, float]:
+        return {k: sum(v) for k, v in self.add_cls.items()}
+    
+    @property
+    def avg_adi_cls(self) -> dict[int, float]:
+        return {k: sum(v) for k, v in self.adi_cls.items()} 
+    
 
     @property
     def keys(self) -> list[str]:

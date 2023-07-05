@@ -36,6 +36,9 @@ class MposeTrainer(BaseTrainer):
         self, img_path, mode=Mode.TRAIN, use_cache=True, single_object=False
     ):
         return BOPDataset(img_path, mode, use_cache=True, single_object=False)
+    
+    def postprocess_batch(self, pred, batch):
+        return pred, batch
 
     def build_dataset(self, dataset_path: Union[str, Path], mode: Mode):
         """Builds the dataset from the dataset path."""
@@ -147,8 +150,8 @@ class MposeTrainer(BaseTrainer):
 
     def criterion(self, pred, target):
         if self.i % 1000 == 0:
-            np.save("predx.npy", pred[0].detach().cpu().numpy())
-            np.save("targetx.npy", target["gt_features"].detach().cpu().numpy())
+            np.save("temp/predx.npy", pred[0].detach().cpu().numpy())
+            np.save("temp/targetx.npy", target["gt_features"].detach().cpu().numpy())
         self.i += 1
         pred_features = pred[0]#.unsqueeze(0)
         bs, num_vertices = pred_features.shape[:2]

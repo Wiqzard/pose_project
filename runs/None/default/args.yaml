@@ -9,12 +9,10 @@ data_path: null
 resume: false
 epochs: 100
 patience: 50
-batch: 16
-imgsz:
-- 480
-- 640
+batch: 1
+imgsz: 640
 inp_size: 224
-device: 0
+device: 1
 save: true
 save_period: -1
 optimizer: AdamW
@@ -22,7 +20,6 @@ verbose: true
 cos_lr: false
 workers: 1
 plots: true
-shuffle: true
 val: true
 split: val
 save_json: false
@@ -33,30 +30,46 @@ dnn: false
 source: null
 show: false
 save_txt: false
+names:
+- first
+- second
+backbone:
+  freeze: false
+  type: maxxvitv2_rmlp_base_rw_224.sw_in12k
+  init_cfg:
+    pretrained: true
+    in_chans: 3
+    features_only: true
+    out_indices:
+    - 4
+in_channels: 3
+out_channels: 3
+channels: 16
+n_res_blocks: 3
+attention_levels:
+- 0
+- 1
+- 2
+- 3
+attention_mode: gat
+channel_multipliers:
+- 1
+- 2
+- 2
+- 4
+- 4
+- 8
+unpooling_levels:
+- 0
+- 1
+- 2
+n_heads: 4
+d_cond: 768
 lr0: 0.001
 lrf: 0.001
 momentum: 0.937
 weight_decay: 0.0005
-warmup_epochs: 3.0
+warmup_epochs: 0
 warmup_momentum: 0.8
 warmup_bias_lr: 0.001
 nbs: 64
-use_obj_bbox: true
-num_points: 9000
-z_type: rel
-trans_type: centroid_z
-rot_type: allo_rot6d
-num_pm_points: 3000
-pm_loss_sym: true
-pm_r_only: true
-pm_disentangle_t: false
-pm_disentangle_z: false
-pm_t_use_points: true
-pm_lw: 1.0
-rot_loss_type: angular
-rot_lw: 0.0
-trans_lw: 0.0
-centroid_loss_type: l1
-centroid_lw: 1.0
-z_loss_type: l1
-z_lw: 1.0

@@ -25,23 +25,6 @@ def angular_distance_quat(pred_q, gt_q, reduction="mean"):
     else:
         return dist
 
-
-# def angular_distance_rot(m1, m2, reduction="mean"):
-#    m = torch.bmm(m1, m2.transpose(1, 2))  # b*3*3
-#    m_trace = torch.einsum("bii->b", m)  # batch trace
-#    cos = (m_trace - 1) / 2  # [-1, 1]
-#    # eps = 1e-6
-#    # cos = torch.clamp(cos, -1+eps, 1-eps)  # avoid nan
-#    # theta = torch.acos(cos)
-#    dist = (1 - cos) / 2  # [0, 1]
-#    if reduction == "mean":
-#        return dist.mean()
-#    elif reduction == "sum":
-#        return dist.sum()
-#    else:
-#        return dist
-
-
 def angular_distance_rot(pred_rot: torch.Tensor, gt_rot: torch.Tensor) -> torch.Tensor:
     """
     Compute the angular loss between predicted and ground truth batched rotation matrices.

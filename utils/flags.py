@@ -10,7 +10,13 @@ class BBoxType(Enum):
     VISIBLE = auto()
     JITTER = auto() 
 
-class AttentionMode(Enum):
+class MetricType(Enum):
+    ANG_DIST = auto()
+    EUCL_DIST = auto()
+    ADD = auto()
+    ADI = auto()
+
+class AttentionType(Enum):
     pass
  
 class DistType(Enum):

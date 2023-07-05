@@ -17,11 +17,11 @@ from data_tools.augmentations.augmentator import Augmentator
 
 class DirectDataset(Dataset):
     def __init__(
-        self, bop_dataset: BOPDataset, cfg=None, transforms=None, mode=None
+        self, bop_dataset: BOPDataset, cfg=None, transforms=None, mode=None, reduce=1
     ) -> None:
         super().__init__()
         # self.reduce = reduce
-        self.reduce = 1
+        self.reduce = reduce
         # self.mae = mae
         self.dataset = bop_dataset
         self.transforms = transforms
@@ -71,7 +71,6 @@ class DirectDataset(Dataset):
             "bbox": None,
             "roi_coord_2d": None,
             "cams": None,
-            # "roi_cams": None,
             "roi_centers": None,
             "roi_wh": None,
             "resize_ratios": None,

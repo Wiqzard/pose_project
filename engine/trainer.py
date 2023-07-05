@@ -218,16 +218,19 @@ class BaseTrainer:
             self.trainset, batch_size=batch_size, rank=RANK, mode=Mode.TRAIN
         )
         if RANK in (-1, 0):
-            self.test_loader = self.get_dataloader(
-                self.testset, batch_size=batch_size * 2, rank=-1, mode=Mode.TEST
-            )
-            self.validator = self.get_validator()
-            metric_keys = self.validator.metrics.keys + self.label_loss_items(
-                prefix="val"
-            )
-            self.metrics = dict(
-                zip(metric_keys, [0] * len(metric_keys))
-            )  # TODO: init metrics for plot_results()?
+            if self.args.val:
+                self.test_loader = self.get_dataloader(
+                    self.testset, batch_size=batch_size * 2, rank=-1, mode=Mode.TEST
+                )
+                self.validator = self.get_validator()
+                metric_keys = self.validator.metrics.keys + self.label_loss_items(
+                    prefix="val"
+                )
+                self.metrics = dict(
+                    zip(metric_keys, [0] * len(metric_keys))
+                )  # TODO: init metrics for plot_results()?
+            else:
+                self.metrics = {}
             self.ema = ModelEMA(self.model)
          #   if self.args.plots and not self.args.v5loader:
          #       self.plot_training_labels()
